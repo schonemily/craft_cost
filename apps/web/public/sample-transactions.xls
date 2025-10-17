@@ -1,0 +1,138 @@
+<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+  <Worksheet ss:Name="Transactions">
+    <Table>
+      <Row>
+        <Cell><Data ss:Type="String">date</Data></Cell>
+        <Cell><Data ss:Type="String">amount</Data></Cell>
+        <Cell><Data ss:Type="String">description</Data></Cell>
+        <Cell><Data ss:Type="String">merchant</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-08-05</Data></Cell>
+        <Cell><Data ss:Type="Number">-12.99</Data></Cell>
+        <Cell><Data ss:Type="String">Netflix monthly subscription</Data></Cell>
+        <Cell><Data ss:Type="String">Netflix</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-09-05</Data></Cell>
+        <Cell><Data ss:Type="Number">-12.99</Data></Cell>
+        <Cell><Data ss:Type="String">Netflix monthly subscription</Data></Cell>
+        <Cell><Data ss:Type="String">Netflix</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-10-05</Data></Cell>
+        <Cell><Data ss:Type="Number">-12.99</Data></Cell>
+        <Cell><Data ss:Type="String">Netflix monthly subscription</Data></Cell>
+        <Cell><Data ss:Type="String">Netflix</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-08-07</Data></Cell>
+        <Cell><Data ss:Type="Number">-13.99</Data></Cell>
+        <Cell><Data ss:Type="String">Disney+ monthly subscription</Data></Cell>
+        <Cell><Data ss:Type="String">Disney</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-09-07</Data></Cell>
+        <Cell><Data ss:Type="Number">-13.99</Data></Cell>
+        <Cell><Data ss:Type="String">Disney+ monthly subscription</Data></Cell>
+        <Cell><Data ss:Type="String">Disney</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-10-07</Data></Cell>
+        <Cell><Data ss:Type="Number">-13.99</Data></Cell>
+        <Cell><Data ss:Type="String">Disney+ monthly subscription</Data></Cell>
+        <Cell><Data ss:Type="String">Disney</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-08-03</Data></Cell>
+        <Cell><Data ss:Type="Number">-14.99</Data></Cell>
+        <Cell><Data ss:Type="String">Spotify Premium</Data></Cell>
+        <Cell><Data ss:Type="String">Spotify</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-09-03</Data></Cell>
+        <Cell><Data ss:Type="Number">-14.99</Data></Cell>
+        <Cell><Data ss:Type="String">Spotify Premium</Data></Cell>
+        <Cell><Data ss:Type="String">Spotify</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-10-03</Data></Cell>
+        <Cell><Data ss:Type="Number">-14.99</Data></Cell>
+        <Cell><Data ss:Type="String">Spotify Premium</Data></Cell>
+        <Cell><Data ss:Type="String">Spotify</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-09-12</Data></Cell>
+        <Cell><Data ss:Type="Number">-85.00</Data></Cell>
+        <Cell><Data ss:Type="String">Internet bill - Fiber 300</Data></Cell>
+        <Cell><Data ss:Type="String">Acme Internet</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-10-12</Data></Cell>
+        <Cell><Data ss:Type="Number">-85.00</Data></Cell>
+        <Cell><Data ss:Type="String">Internet bill - Fiber 300</Data></Cell>
+        <Cell><Data ss:Type="String">Acme Internet</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-09-01</Data></Cell>
+        <Cell><Data ss:Type="Number">-120.45</Data></Cell>
+        <Cell><Data ss:Type="String">Electric service</Data></Cell>
+        <Cell><Data ss:Type="String">City Power</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-10-01</Data></Cell>
+        <Cell><Data ss:Type="Number">-118.75</Data></Cell>
+        <Cell><Data ss:Type="String">Electric service</Data></Cell>
+        <Cell><Data ss:Type="String">City Power</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-09-20</Data></Cell>
+        <Cell><Data ss:Type="Number">-45.20</Data></Cell>
+        <Cell><Data ss:Type="String">Dinner at The Local</Data></Cell>
+        <Cell><Data ss:Type="String">The Local Restaurant</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-10-02</Data></Cell>
+        <Cell><Data ss:Type="Number">-32.18</Data></Cell>
+        <Cell><Data ss:Type="String">Lunch at Bowl &amp; Grill</Data></Cell>
+        <Cell><Data ss:Type="String">Bowl &amp; Grill</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-09-10</Data></Cell>
+        <Cell><Data ss:Type="Number">-215.00</Data></Cell>
+        <Cell><Data ss:Type="String">Auto insurance premium</Data></Cell>
+        <Cell><Data ss:Type="String">Acme Insurance</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-10-10</Data></Cell>
+        <Cell><Data ss:Type="Number">-215.00</Data></Cell>
+        <Cell><Data ss:Type="String">Auto insurance premium</Data></Cell>
+        <Cell><Data ss:Type="String">Acme Insurance</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-09-08</Data></Cell>
+        <Cell><Data ss:Type="Number">-96.42</Data></Cell>
+        <Cell><Data ss:Type="String">Groceries - Market Square</Data></Cell>
+        <Cell><Data ss:Type="String">Market Square</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-09-22</Data></Cell>
+        <Cell><Data ss:Type="Number">-123.67</Data></Cell>
+        <Cell><Data ss:Type="String">Groceries - Market Square</Data></Cell>
+        <Cell><Data ss:Type="String">Market Square</Data></Cell>
+      </Row>
+      <Row>
+        <Cell><Data ss:Type="String">2025-10-06</Data></Cell>
+        <Cell><Data ss:Type="Number">-110.14</Data></Cell>
+        <Cell><Data ss:Type="String">Groceries - Market Square</Data></Cell>
+        <Cell><Data ss:Type="String">Market Square</Data></Cell>
+      </Row>
+    </Table>
+  </Worksheet>
+</Workbook>

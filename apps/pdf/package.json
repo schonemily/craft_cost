@@ -1,0 +1,10 @@
+{
+  "name": "pdf-service",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "express": "4.19.2"
+  }
+}

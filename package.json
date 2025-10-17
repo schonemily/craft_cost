@@ -1,0 +1,14 @@
+{
+  "name": "debt-expense-advisor",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "docker compose up --build",
+    "down": "docker compose down --remove-orphans",
+    "migrate": "docker compose run --rm api alembic upgrade head",
+    "test": "echo 'Tests will be added in Weeks 2-5'"
+  }
+}

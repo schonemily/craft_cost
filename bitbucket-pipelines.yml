@@ -1,0 +1,187 @@
+image: atlassian/default-image:3
+
+pipelines:
+  branches:
+    main:
+      - step:
+          name: SCA – npm audit (web)
+          image: node:20
+          caches:
+            - node
+          script:
+            - npm ci || npm install
+            - npm --workspace apps/web audit --omit=dev --audit-level=critical || echo "npm audit warnings (non-blocking)"
+      - step:
+          name: SCA – pip-audit (api)
+          image: python:3.11
+          caches:
+            - pip
+          script:
+            - python -V
+            - python -m pip install --upgrade pip
+            - python -m pip install pip-audit
+            - pip-audit -r apps/api/requirements.txt || echo "pip-audit warnings (non-blocking)"
+      - step:
+          name: Secrets scan – gitleaks
+          image: zricethezav/gitleaks:latest
+          script:
+            - gitleaks detect --source . --no-git --redact --exit-code 1
+      - step:
+          name: SAST – semgrep (OWASP Top 10)
+          image: returntocorp/semgrep:latest
+          script:
+            - semgrep scan --config p/owasp-top-ten --error
+      - step:
+          name: Web build
+          image: node:20
+          caches:
+            - node
+          script:
+            - npm ci || npm install
+            - npm run build --workspace apps/web
+      - step:
+          name: API deps check
+          image: python:3.11
+          caches:
+            - pip
+          script:
+            - python -V
+            - python -m pip install --upgrade pip
+            - python -m pip install -r apps/api/requirements.txt
+            - python -c "import fastapi, sqlalchemy, alembic, redis; print('API deps OK')"
+      - step:
+          name: API tests (pytest)
+          image: python:3.11
+          caches:
+            - pip
+          services:
+            - postgres
+          script:
+            - python -V
+            - python -m pip install --upgrade pip
+            - python -m pip install -r apps/api/requirements.txt
+            - apt-get update && apt-get install -y postgresql-client
+            - until pg_isready -h postgres -U postgres; do echo "waiting for postgres"; sleep 2; done
+            - export POSTGRES_URL=postgresql+psycopg://postgres:postgres@postgres:5432/app
+            - cd apps/api
+            - alembic upgrade head
+            - pytest -q
+  default:
+    - step:
+        name: SCA – npm audit (web)
+        image: node:20
+        caches:
+          - node
+        script:
+          - npm ci || npm install
+          - npm --workspace apps/web audit --omit=dev --audit-level=critical || echo "npm audit warnings (non-blocking)"
+    - step:
+        name: SCA – pip-audit (api)
+        image: python:3.11
+        caches:
+          - pip
+        script:
+          - python -V
+          - python -m pip install --upgrade pip
+          - python -m pip install pip-audit
+          - pip-audit -r apps/api/requirements.txt || echo "pip-audit warnings (non-blocking)"
+    - step:
+        name: Secrets scan – gitleaks
+        image: zricethezav/gitleaks:latest
+        script:
+          - gitleaks detect --source . --no-git --redact --exit-code 1
+    - step:
+        name: SAST – semgrep (OWASP Top 10)
+        image: returntocorp/semgrep:latest
+        script:
+          - semgrep scan --config p/owasp-top-ten --error
+    - step:
+        name: Web build
+        image: node:20
+        caches:
+          - node
+        script:
+          - npm ci || npm install
+          - npm run build --workspace apps/web
+    - step:
+        name: API deps check
+        image: python:3.11
+        caches:
+          - pip
+        script:
+          - python -V
+          - python -m pip install --upgrade pip
+          - python -m pip install -r apps/api/requirements.txt
+          - python -c "import fastapi, sqlalchemy, alembic, redis; print('API deps OK')"
+    - step:
+        name: API tests (pytest)
+        image: python:3.11
+        caches:
+          - pip
+        services:
+          - postgres
+        script:
+          - python -V
+          - python -m pip install --upgrade pip
+          - python -m pip install -r apps/api/requirements.txt
+          - apt-get update && apt-get install -y postgresql-client
+          - until pg_isready -h postgres -U postgres; do echo "waiting for postgres"; sleep 2; done
+          - export POSTGRES_URL=postgresql+psycopg://postgres:postgres@postgres:5432/app
+          - cd apps/api
+          - alembic upgrade head
+          - pytest -q
+  pull-requests:
+    '**':
+      - step:
+          name: PR – npm audit
+          image: node:20
+          caches:
+            - node
+          script:
+            - npm ci || npm install
+            - npm --workspace apps/web audit --omit=dev --audit-level=critical || echo "npm audit warnings (non-blocking)"
+      - step:
+          name: PR – pip-audit
+          image: python:3.11
+          caches:
+            - pip
+          script:
+            - python -m pip install --upgrade pip
+            - python -m pip install pip-audit
+            - pip-audit -r apps/api/requirements.txt || echo "pip-audit warnings (non-blocking)"
+      - step:
+          name: PR – secrets scan (gitleaks)
+          image: zricethezav/gitleaks:latest
+          script:
+            - gitleaks detect --source . --no-git --redact --exit-code 1
+      - step:
+          name: PR – SAST (semgrep)
+          image: returntocorp/semgrep:latest
+          script:
+            - semgrep scan --config p/owasp-top-ten --error
+      - step:
+          name: PR – API tests
+          image: python:3.11
+          caches:
+            - pip
+          services:
+            - postgres
+          script:
+            - python -m pip install --upgrade pip
+            - python -m pip install -r apps/api/requirements.txt
+            - apt-get update && apt-get install -y postgresql-client
+            - until pg_isready -h postgres -U postgres; do echo "waiting for postgres"; sleep 2; done
+            - export POSTGRES_URL=postgresql+psycopg://postgres:postgres@postgres:5432/app
+            - cd apps/api
+            - alembic upgrade head
+            - pytest -q
+definitions:
+  caches:
+    pip: ~/.cache/pip
+  services:
+    postgres:
+      image: postgres:16-alpine
+      variables:
+        POSTGRES_DB: app
+        POSTGRES_USER: postgres
+        POSTGRES_PASSWORD: postgres

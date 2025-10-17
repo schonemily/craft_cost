@@ -1,0 +1,21 @@
+date,amount,description,merchant
+2025-08-05,-12.99,Netflix monthly subscription,Netflix
+2025-09-05,-12.99,Netflix monthly subscription,Netflix
+2025-10-05,-12.99,Netflix monthly subscription,Netflix
+2025-08-07,-13.99,Disney+ monthly subscription,Disney
+2025-09-07,-13.99,Disney+ monthly subscription,Disney
+2025-10-07,-13.99,Disney+ monthly subscription,Disney
+2025-08-03,-14.99,Spotify Premium,Spotify
+2025-09-03,-14.99,Spotify Premium,Spotify
+2025-10-03,-14.99,Spotify Premium,Spotify
+2025-09-12,-85.00,Internet bill - Fiber 300,Acme Internet
+2025-10-12,-85.00,Internet bill - Fiber 300,Acme Internet
+2025-09-01,-120.45,Electric service,City Power
+2025-10-01,-118.75,Electric service,City Power
+2025-09-20,-45.20,Dinner at The Local,The Local Restaurant
+2025-10-02,-32.18,Lunch at Bowl & Grill,Bowl & Grill
+2025-09-10,-215.00,Auto insurance premium,Acme Insurance
+2025-10-10,-215.00,Auto insurance premium,Acme Insurance
+2025-09-08,-96.42,Groceries - Market Square,Market Square
+2025-09-22,-123.67,Groceries - Market Square,Market Square
+2025-10-06,-110.14,Groceries - Market Square,Market Square
