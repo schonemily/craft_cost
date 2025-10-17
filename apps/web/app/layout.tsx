@@ -29,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Link href="/upload" className="hover:text-white">Upload CSV</Link>
                 <Link href="/spend" className="hover:text-white">Spend</Link>
                 <Link href="/suggestions" className="hover:text-white">Suggestions</Link>
+                <Link href="/debt" className="hover:text-white">Debt</Link>
                 <Link href="/flags" className="hover:text-white">Flags</Link>
               </div>
               <TopbarStatus />

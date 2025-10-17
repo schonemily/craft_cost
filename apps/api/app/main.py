@@ -6,6 +6,8 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, status, Depends, Q
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from typing import List, Optional
+from .debt_simulator import Debt as SimDebt, simulate as simulate_debts
 from sqlalchemy import select, func, and_
 from sqlalchemy.orm import Session
 from .db import get_session
@@ -138,6 +140,80 @@ async def get_suggestions(db: Session = Depends(get_session)):
     items = generate_suggestions(db)
     return {"items": items}
 
+
+class DebtItem(BaseModel):
+    name: str
+    balance: float
+    apr: float
+    min_payment: float
+
+
+class DebtSimRequest(BaseModel):
+    debts: List[DebtItem]
+    extra: float = 0
+    strategy: Optional[str] = None  # "snowball" | "avalanche" | None (both)
+
+
+@app.post("/v1/debt/simulate")
+async def debt_simulate(payload: DebtSimRequest):
+    debts = [SimDebt(name=d.name, balance=d.balance, apr=d.apr, min_payment=d.min_payment) for d in payload.debts]
+    extra = float(payload.extra or 0)
+    # If strategy not specified, compute both
+    if not payload.strategy:
+        snow = simulate_debts(debts, extra, "snowball")
+        aval = simulate_debts(debts, extra, "avalanche")
+        return {
+            "snowball": {
+                "strategy": snow.strategy,
+                "months": snow.months,
+                "interest_paid": snow.interest_paid,
+                "total_paid": snow.total_paid,
+                "debts": [
+                    {
+                        "name": d.name,
+                        "months": d.months,
+                        "interest_paid": d.interest_paid,
+                        "total_paid": d.total_paid,
+                    }
+                    for d in snow.debts
+                ],
+            },
+            "avalanche": {
+                "strategy": aval.strategy,
+                "months": aval.months,
+                "interest_paid": aval.interest_paid,
+                "total_paid": aval.total_paid,
+                "debts": [
+                    {
+                        "name": d.name,
+                        "months": d.months,
+                        "interest_paid": d.interest_paid,
+                        "total_paid": d.total_paid,
+                    }
+                    for d in aval.debts
+                ],
+            },
+        }
+    # Single strategy
+    strat = payload.strategy.lower().strip()
+    if strat not in {"snowball", "avalanche"}:
+        raise HTTPException(status_code=400, detail={"code": "invalid_strategy", "message": "Use snowball or avalanche"})
+    res = simulate_debts(debts, extra, strat)
+    return {
+        "strategy": res.strategy,
+        "months": res.months,
+        "interest_paid": res.interest_paid,
+        "total_paid": res.total_paid,
+        "debts": [
+            {
+                "name": d.name,
+                "months": d.months,
+                "interest_paid": d.interest_paid,
+                "total_paid": d.total_paid,
+            }
+            for d in res.debts
+        ],
+    }
 
 class FlagPayload(BaseModel):
     key: str
