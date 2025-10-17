@@ -146,22 +146,61 @@ class DebtItem(BaseModel):
     balance: float
     apr: float
     min_payment: float
+    promo_apr: float | None = None
+    promo_months: int | None = None
+
+
+class ExtraPayment(BaseModel):
+    month: int | None = None
+    monthOffset: int | None = None
+    amount: float
 
 
 class DebtSimRequest(BaseModel):
     debts: List[DebtItem]
     extra: float = 0
     strategy: Optional[str] = None  # "snowball" | "avalanche" | None (both)
+    include_schedule: bool = False
+    extra_schedule: List[ExtraPayment] | None = None
+    issuer_percent: float | None = None
+    issuer_floor: float | None = None
 
 
 @app.post("/v1/debt/simulate")
 async def debt_simulate(payload: DebtSimRequest):
-    debts = [SimDebt(name=d.name, balance=d.balance, apr=d.apr, min_payment=d.min_payment) for d in payload.debts]
+    debts = [
+        SimDebt(
+            name=d.name,
+            balance=d.balance,
+            apr=d.apr,
+            min_payment=d.min_payment,
+            promo_apr=d.promo_apr,
+            promo_months=d.promo_months,
+        )
+        for d in payload.debts
+    ]
     extra = float(payload.extra or 0)
+    include_schedule = bool(payload.include_schedule)
+    extra_schedule = [e.model_dump() for e in (payload.extra_schedule or [])]
+    issuer_percent = 0.01 if payload.issuer_percent is None else float(payload.issuer_percent)
+    issuer_floor = 25.0 if payload.issuer_floor is None else float(payload.issuer_floor)
+
     # If strategy not specified, compute both
     if not payload.strategy:
-        snow = simulate_debts(debts, extra, "snowball")
-        aval = simulate_debts(debts, extra, "avalanche")
+        snow = simulate_debts(
+            debts, extra, "snowball",
+            include_schedule=include_schedule,
+            extra_schedule=extra_schedule,
+            issuer_percent=issuer_percent,
+            issuer_floor=issuer_floor,
+        )
+        aval = simulate_debts(
+            debts, extra, "avalanche",
+            include_schedule=include_schedule,
+            extra_schedule=extra_schedule,
+            issuer_percent=issuer_percent,
+            issuer_floor=issuer_floor,
+        )
         return {
             "snowball": {
                 "strategy": snow.strategy,
@@ -177,6 +216,7 @@ async def debt_simulate(payload: DebtSimRequest):
                     }
                     for d in snow.debts
                 ],
+                **({"monthly": snow.monthly} if include_schedule else {}),
             },
             "avalanche": {
                 "strategy": aval.strategy,
@@ -192,13 +232,20 @@ async def debt_simulate(payload: DebtSimRequest):
                     }
                     for d in aval.debts
                 ],
+                **({"monthly": aval.monthly} if include_schedule else {}),
             },
         }
     # Single strategy
     strat = payload.strategy.lower().strip()
     if strat not in {"snowball", "avalanche"}:
         raise HTTPException(status_code=400, detail={"code": "invalid_strategy", "message": "Use snowball or avalanche"})
-    res = simulate_debts(debts, extra, strat)
+    res = simulate_debts(
+        debts, extra, strat,
+        include_schedule=include_schedule,
+        extra_schedule=extra_schedule,
+        issuer_percent=issuer_percent,
+        issuer_floor=issuer_floor,
+    )
     return {
         "strategy": res.strategy,
         "months": res.months,
@@ -213,6 +260,7 @@ async def debt_simulate(payload: DebtSimRequest):
             }
             for d in res.debts
         ],
+        **({"monthly": res.monthly} if include_schedule else {}),
     }
 
 class FlagPayload(BaseModel):

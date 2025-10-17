@@ -1,5 +1,17 @@
 "use client";
 import * as React from "react";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  CartesianGrid,
+  BarChart,
+  Bar,
+} from "recharts";
 
 export default function DebtPage() {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -12,6 +24,7 @@ export default function DebtPage() {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<any>(null);
+  const [includeSchedule, setIncludeSchedule] = React.useState<boolean>(true);
 
   function updateDebt(i: number, field: keyof DebtRow, value: string) {
     const valNum = ["balance", "apr", "min_payment"].includes(field as string)
@@ -21,7 +34,7 @@ export default function DebtPage() {
   }
 
   function addRow() {
-    setDebts((prev) => [...prev, { name: "", balance: 0, apr: 0, min_payment: 0 }]);
+    setDebts((prev) => [...prev, { name: "", balance: 0, apr: 0, min_payment: 0, promo_apr: 0, promo_months: 0 } as any]);
   }
 
   function removeRow(i: number) {
@@ -34,7 +47,7 @@ export default function DebtPage() {
     setResult(null);
     setLoading(true);
     try {
-      const payload: any = { debts, extra };
+      const payload: any = { debts, extra, include_schedule: includeSchedule };
       if (strategy !== "both") payload.strategy = strategy;
       const r = await fetch(`${apiBase}/v1/debt/simulate`, {
         method: "POST",
@@ -67,6 +80,8 @@ export default function DebtPage() {
                 <th className="px-3 py-2 text-left">Balance</th>
                 <th className="px-3 py-2 text-left">APR %</th>
                 <th className="px-3 py-2 text-left">Min Payment</th>
+                <th className="px-3 py-2 text-left">Promo APR %</th>
+                <th className="px-3 py-2 text-left">Promo Months</th>
                 <th className="px-3 py-2"></th>
               </tr>
             </thead>
@@ -90,6 +105,14 @@ export default function DebtPage() {
                       onChange={(e) => updateDebt(i, "min_payment", e.target.value)} />
                   </td>
                   <td className="px-3 py-2">
+                    <input type="number" min="0" step="0.01" className="w-full bg-transparent outline-none border border-transparent focus:border-[var(--border)]/60 rounded px-2 py-1" value={(d as any).promo_apr ?? 0}
+                      onChange={(e) => updateDebt(i, "promo_apr" as any, e.target.value)} />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input type="number" min="0" step="1" className="w-full bg-transparent outline-none border border-transparent focus:border-[var(--border)]/60 rounded px-2 py-1" value={(d as any).promo_months ?? 0}
+                      onChange={(e) => updateDebt(i, "promo_months" as any, e.target.value)} />
+                  </td>
+                  <td className="px-3 py-2">
                     <button type="button" onClick={() => removeRow(i)} className="text-xs text-red-400 hover:text-red-300">Remove</button>
                   </td>
                 </tr>
@@ -103,6 +126,10 @@ export default function DebtPage() {
             <label className="text-[var(--muted)]">Extra/month</label>
             <input type="number" min="0" step="1" className="w-28 bg-transparent outline-none border border-[var(--border)]/60 rounded px-2 py-1" value={extra}
               onChange={(e) => setExtra(Number(e.target.value))} />
+            <label className="ml-4 inline-flex items-center gap-2 text-[var(--muted)]">
+              <input type="checkbox" className="accent-[var(--brand)]" checked={includeSchedule} onChange={(e) => setIncludeSchedule(e.target.checked)} />
+              Include schedule (charts)
+            </label>
             <label className="ml-4 text-[var(--muted)]">Strategy</label>
             <select className="bg-transparent outline-none border border-[var(--border)]/60 rounded px-2 py-1" value={strategy}
               onChange={(e) => setStrategy(e.target.value)}>
@@ -159,6 +186,35 @@ export default function DebtPage() {
                     </tbody>
                   </table>
                 </div>
+                {includeSchedule && r.monthly && (
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={(r.monthly as any[])?.map((m: any) => ({ m: m.month, bal: m.balance }))}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                          <XAxis dataKey="m" stroke="rgba(255,255,255,0.5)" />
+                          <YAxis stroke="rgba(255,255,255,0.5)" />
+                          <Tooltip />
+                          <Legend />
+                          <Line type="monotone" dataKey="bal" name="Balance" stroke="#60a5fa" dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={(r.monthly as any[])?.map((m: any) => ({ m: m.month, principal: m.principal, interest: m.interest }))}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                          <XAxis dataKey="m" stroke="rgba(255,255,255,0.5)" />
+                          <YAxis stroke="rgba(255,255,255,0.5)" />
+                          <Tooltip />
+                          <Legend />
+                          <Bar dataKey="principal" stackId="a" fill="#34d399" name="Principal" />
+                          <Bar dataKey="interest" stackId="a" fill="#f472b6" name="Interest" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
               </article>
             );
           })}
@@ -173,4 +229,6 @@ type DebtRow = {
   balance: number;
   apr: number;
   min_payment: number;
+  promo_apr?: number;
+  promo_months?: number;
 };
