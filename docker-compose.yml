@@ -50,10 +50,17 @@ services:
       STORAGE_ACCESS_KEY: minioadmin
       STORAGE_SECRET_KEY: minioadmin
       SESSION_SECRET: dev_session_secret
+      PDF_SERVICE_URL: http://pdf:4000/render
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
     depends_on:
       db:
         condition: service_healthy
       redis:
+        condition: service_started
+      pdf:
+        condition: service_started
+      mailhog:
         condition: service_started
     ports:
       - "8000:8000"

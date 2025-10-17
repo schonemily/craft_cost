@@ -4,9 +4,12 @@ from rq import Queue
 from rq.job import Job
 from fastapi import FastAPI, UploadFile, File, HTTPException, status, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Literal
+import httpx
+import smtplib
+from email.message import EmailMessage
 from .debt_simulator import Debt as SimDebt, simulate as simulate_debts
 from sqlalchemy import select, func, and_
 from sqlalchemy.orm import Session
@@ -262,6 +265,173 @@ async def debt_simulate(payload: DebtSimRequest):
         ],
         **({"monthly": res.monthly} if include_schedule else {}),
     }
+
+
+class DebtExportRequest(BaseModel):
+    debts: List[DebtItem]
+    extra: float = 0
+    strategy: Optional[str] = None
+    include_schedule: bool = True
+    extra_schedule: List[ExtraPayment] | None = None
+    format: Literal['pdf', 'email']
+    email: Optional[str] = None
+    title: Optional[str] = None
+
+
+@app.post("/v1/debt/export")
+async def debt_export(payload: DebtExportRequest, db: Session = Depends(get_session)):
+    def to_dict(result):
+        if not result:
+            return None
+        return {
+            "strategy": result.strategy,
+            "months": result.months,
+            "interest_paid": result.interest_paid,
+            "total_paid": result.total_paid,
+            "debts": [
+                {
+                    "name": d.name,
+                    "months": d.months,
+                    "interest_paid": d.interest_paid,
+                    "total_paid": d.total_paid,
+                }
+                for d in (result.debts or [])
+            ],
+            **({"monthly": result.monthly} if getattr(result, "monthly", None) else {}),
+        }
+    # Build debts and simulate (both or single) with schedule
+    debts = [
+        SimDebt(
+            name=d.name,
+            balance=d.balance,
+            apr=d.apr,
+            min_payment=d.min_payment,
+            promo_apr=d.promo_apr,
+            promo_months=d.promo_months,
+        )
+        for d in payload.debts
+    ]
+    extra = float(payload.extra or 0)
+    include_schedule = bool(payload.include_schedule)
+    extra_schedule = [e.model_dump() for e in (payload.extra_schedule or [])]
+
+    if not payload.strategy:
+        snow = simulate_debts(
+            debts, extra, "snowball",
+            include_schedule=include_schedule,
+            extra_schedule=extra_schedule,
+        )
+        aval = simulate_debts(
+            debts, extra, "avalanche",
+            include_schedule=include_schedule,
+            extra_schedule=extra_schedule,
+        )
+        pdf_payload = {
+            "title": payload.title or "Debt Payoff Plan",
+            "snowball": to_dict(snow),
+            "avalanche": to_dict(aval),
+        }
+    else:
+        strat = payload.strategy.lower().strip()
+        if strat not in {"snowball", "avalanche"}:
+            raise HTTPException(status_code=400, detail={"code": "invalid_strategy", "message": "Use snowball or avalanche"})
+        res = simulate_debts(
+            debts, extra, strat,
+            include_schedule=include_schedule,
+            extra_schedule=extra_schedule,
+        )
+        pdf_payload = {
+            "title": payload.title or "Debt Payoff Plan",
+            "strategy": to_dict(res),
+        }
+
+    # If emailing, enforce gating & input before rendering the PDF
+    if payload.format == 'email':
+        flag = db.get(Flag, "pro_enabled")
+        if not flag or not flag.bool_value:
+            raise HTTPException(status_code=402, detail={"code": "pro_required", "message": "Upgrade to Pro to email exports"})
+        if not payload.email or "@" not in payload.email:
+            raise HTTPException(status_code=400, detail={"code": "invalid_email", "message": "Valid email required"})
+
+    # Render PDF via pdf-service (with fallbacks)
+    pdf_url_primary = os.getenv("PDF_SERVICE_URL", "http://pdf:4000/render")
+    pdf_candidates = [
+        pdf_url_primary,
+        "http://host.docker.internal:4000/render",
+        "http://localhost:4000/render",
+    ]
+    pdf_bytes = None
+    last_err = None
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for url in pdf_candidates:
+            try:
+                pdf_resp = await client.post(url, json=pdf_payload)
+                if pdf_resp.status_code == 200:
+                    pdf_bytes = pdf_resp.content
+                    break
+                last_err = f"status {pdf_resp.status_code}"
+            except Exception as e:  # Connect or other errors
+                last_err = str(e)
+        if pdf_bytes is None:
+            raise HTTPException(status_code=502, detail={"code": "pdf_render_failed", "message": f"PDF service unreachable: {last_err}"})
+
+    if payload.format == 'pdf':
+        return Response(content=pdf_bytes, media_type='application/pdf', headers={"Content-Disposition": 'inline; filename="debt-plan.pdf"'})
+
+    msg = EmailMessage()
+    msg["Subject"] = payload.title or "Your Debt Payoff Plan"
+    msg["From"] = os.getenv("MAIL_FROM", "noreply@craft_cost.local")
+    msg["To"] = payload.email
+    # Text body
+    msg.set_content("Your debt payoff plan is attached as a PDF.\n\nThis message includes a brief summary below. View the full plan in the attachment.")
+
+    # Build simple HTML summary
+    def _row(label: str, v: float | int | str) -> str:
+        return f"<tr><td style='padding:6px 10px;border:1px solid #e5e7eb'>{label}</td><td style='padding:6px 10px;border:1px solid #e5e7eb;text-align:right'>{v}</td></tr>"
+
+    def _fmt(x):
+        try:
+            return f"${float(x or 0):.2f}"
+        except Exception:
+            return str(x)
+
+    html_parts = [
+        "<html><body style='font-family:Inter,Helvetica,Arial,sans-serif;color:#111827'>",
+        f"<h2 style='margin:0 0 8px 0'>{(payload.title or 'Your Debt Payoff Plan')}</h2>",
+    ]
+    if pdf_payload.get("snowball") or pdf_payload.get("avalanche"):
+        for key in ["snowball", "avalanche"]:
+            r = pdf_payload.get(key)
+            if not r:
+                continue
+            html_parts.append(f"<h3 style='margin:16px 0 6px 0;text-transform:capitalize'>{key}</h3>")
+            html_parts.append("<table style='border-collapse:collapse;border:1px solid #e5e7eb'>")
+            html_parts.append(_row("Months", r.get("months", 0)))
+            html_parts.append(_row("Interest paid", _fmt(r.get("interest_paid"))))
+            html_parts.append(_row("Total paid", _fmt(r.get("total_paid"))))
+            html_parts.append("</table>")
+    elif pdf_payload.get("strategy"):
+        r = pdf_payload["strategy"]
+        name = r.get("strategy", "Result").title()
+        html_parts.append(f"<h3 style='margin:16px 0 6px 0'>{name}</h3>")
+        html_parts.append("<table style='border-collapse:collapse;border:1px solid #e5e7eb'>")
+        html_parts.append(_row("Months", r.get("months", 0)))
+        html_parts.append(_row("Interest paid", _fmt(r.get("interest_paid"))))
+        html_parts.append(_row("Total paid", _fmt(r.get("total_paid"))))
+        html_parts.append("</table>")
+    html_parts.append("<p style='margin-top:16px'>See the attached PDF for detailed tables and schedules.</p>")
+    html_parts.append("</body></html>")
+    msg.add_alternative("".join(html_parts), subtype='html')
+
+    # Attachment
+    msg.add_attachment(pdf_bytes, maintype='application', subtype='pdf', filename='debt-plan.pdf')
+
+    smtp_host = os.getenv("SMTP_HOST", "mailhog")
+    smtp_port = int(os.getenv("SMTP_PORT", "1025"))
+    with smtplib.SMTP(smtp_host, smtp_port) as s:
+        s.send_message(msg)
+
+    return {"ok": True}
 
 class FlagPayload(BaseModel):
     key: str

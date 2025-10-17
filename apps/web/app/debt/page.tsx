@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import toast from "react-hot-toast";
 import {
   ResponsiveContainer,
   LineChart,
@@ -25,12 +26,56 @@ export default function DebtPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<any>(null);
   const [includeSchedule, setIncludeSchedule] = React.useState<boolean>(true);
+  const [extraSchedule, setExtraSchedule] = React.useState<ExtraRow[]>([]);
+  const [email, setEmail] = React.useState<string>("");
+  const [pro, setPro] = React.useState<boolean>(false);
 
   function updateDebt(i: number, field: keyof DebtRow, value: string) {
     const valNum = ["balance", "apr", "min_payment"].includes(field as string)
       ? Number(value)
       : (value as any);
     setDebts((prev) => prev.map((d, idx) => (idx === i ? { ...d, [field]: valNum } : d)));
+  }
+
+  async function onDownloadPdf() {
+    try {
+      const payload: any = { debts, extra, include_schedule: true, extra_schedule: extraSchedule, format: "pdf", strategy: strategy === "both" ? undefined : strategy };
+      const r = await fetch(`${apiBase}/v1/debt/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error(`Export failed (${r.status})`);
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "debt-plan.pdf";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Downloaded PDF");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to export PDF");
+    }
+  }
+
+  async function onEmailPlan() {
+    try {
+      const payload: any = { debts, extra, include_schedule: true, extra_schedule: extraSchedule, format: "email", email, strategy: strategy === "both" ? undefined : strategy };
+      const r = await fetch(`${apiBase}/v1/debt/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (r.status === 402) {
+        toast.error("Email export is a Pro feature. Upgrade to enable.");
+        return;
+      }
+      if (!r.ok) throw new Error(`Email failed (${r.status})`);
+      toast.success("Email sent (MailHog in dev)");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to email plan");
+    }
   }
 
   function addRow() {
@@ -41,13 +86,36 @@ export default function DebtPage() {
     setDebts((prev) => prev.filter((_, idx) => idx !== i));
   }
 
+  function addExtraRow() {
+    setExtraSchedule((prev) => [...prev, { month: 1, amount: 100 }]);
+  }
+
+  function updateExtra(i: number, field: keyof ExtraRow, value: string) {
+    const v = Number(value);
+    setExtraSchedule((prev) => prev.map((r, idx) => (idx === i ? { ...r, [field]: v } : r)));
+  }
+
+  function removeExtra(i: number) {
+    setExtraSchedule((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch(`${apiBase}/v1/flags`);
+        const data = await r.json();
+        setPro(Boolean(data?.flags?.pro_enabled));
+      } catch {}
+    })();
+  }, [apiBase]);
+
   async function onRun(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setResult(null);
     setLoading(true);
     try {
-      const payload: any = { debts, extra, include_schedule: includeSchedule };
+      const payload: any = { debts, extra, include_schedule: includeSchedule, extra_schedule: extraSchedule };
       if (strategy !== "both") payload.strategy = strategy;
       const r = await fetch(`${apiBase}/v1/debt/simulate`, {
         method: "POST",
@@ -144,6 +212,16 @@ export default function DebtPage() {
         </div>
       </form>
 
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <button type="button" onClick={onDownloadPdf} className="rounded border border-[var(--border)]/60 px-3 py-1 hover:bg-white/5">Download PDF</button>
+        <div className="flex items-center gap-2">
+          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" className="w-56 bg-transparent outline-none border border-[var(--border)]/60 rounded px-2 py-1" />
+          <button type="button" onClick={onEmailPlan} className="rounded border border-[var(--border)]/60 px-3 py-1 hover:bg-white/5">
+            Email plan{!pro ? " (Pro)" : ""}
+          </button>
+        </div>
+      </div>
+
       {error && (
         <div className="rounded border border-red-800/60 bg-red-900/30 p-3 text-sm text-red-200">{error}</div>
       )}
@@ -186,6 +264,11 @@ export default function DebtPage() {
                     </tbody>
                   </table>
                 </div>
+                {includeSchedule && r.monthly && r.monthly.some((m: any) => (m.principal ?? 0) <= 0) && (
+                  <div className="mt-3 rounded border border-yellow-800/60 bg-yellow-900/30 p-3 text-sm text-yellow-200">
+                    Warning: One or more months pay little to no principal. Consider increasing your payment or scheduling extra payments to avoid negative amortization.
+                  </div>
+                )}
                 {includeSchedule && r.monthly && (
                   <div className="mt-4 grid gap-4 md:grid-cols-2">
                     <div className="h-64 w-full">
@@ -215,11 +298,50 @@ export default function DebtPage() {
                     </div>
                   </div>
                 )}
+                {includeSchedule && r.monthly && (
+                  <div className="mt-3 flex items-center gap-3">
+                    <button type="button" onClick={() => exportCsv(r, title)} className="rounded border border-[var(--border)]/60 px-3 py-1 text-sm hover:bg-white/5">Export CSV</button>
+                    <span className="text-xs text-[var(--muted)]">Assumptions: monthly accrual; payments end-of-month; issuer minimum approximated as max(floor, percent of balance). Charts shown only when schedule is included.</span>
+                  </div>
+                )}
               </article>
             );
           })}
         </section>
       )}
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold text-white/80">Extra payments (optional)</h2>
+        <div className="overflow-x-auto rounded border border-[var(--border)]/60">
+          <table className="w-full text-sm">
+            <thead className="bg-[var(--surface)]/60">
+              <tr>
+                <th className="px-3 py-2 text-left">Month</th>
+                <th className="px-3 py-2 text-left">Amount</th>
+                <th className="px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {extraSchedule.map((row, i) => (
+                <tr key={i} className="border-t border-[var(--border)]/60">
+                  <td className="px-3 py-2">
+                    <input type="number" min="1" step="1" className="w-28 bg-transparent outline-none border border-transparent focus:border-[var(--border)]/60 rounded px-2 py-1" value={row.month}
+                      onChange={(e) => updateExtra(i, "month", e.target.value)} />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input type="number" min="1" step="1" className="w-28 bg-transparent outline-none border border-transparent focus:border-[var(--border)]/60 rounded px-2 py-1" value={row.amount}
+                      onChange={(e) => updateExtra(i, "amount", e.target.value)} />
+                  </td>
+                  <td className="px-3 py-2">
+                    <button type="button" onClick={() => removeExtra(i)} className="text-xs text-red-400 hover:text-red-300">Remove</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <button type="button" onClick={addExtraRow} className="rounded border border-[var(--border)]/60 px-3 py-1 text-sm hover:bg-white/5">Add extra payment</button>
+      </section>
     </div>
   );
 }
@@ -232,3 +354,23 @@ type DebtRow = {
   promo_apr?: number;
   promo_months?: number;
 };
+
+type ExtraRow = {
+  month: number;
+  amount: number;
+};
+
+function exportCsv(r: any, title: string) {
+  const rows = [
+    ["month", "balance", "interest", "principal"],
+    ...((r.monthly || []) as any[]).map((m: any) => [m.month, m.balance, m.interest, m.principal])
+  ];
+  const csv = rows.map((row) => row.join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `debt_schedule_${title}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
