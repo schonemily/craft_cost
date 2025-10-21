@@ -50,10 +50,25 @@ services:
       STORAGE_ACCESS_KEY: minioadmin
       STORAGE_SECRET_KEY: minioadmin
       SESSION_SECRET: dev_session_secret
+      PDF_SERVICE_URL: http://pdf:4000/render
+      SMTP_HOST: ${SMTP_HOST:-mailhog}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
+      MAIL_FROM: ${MAIL_FROM:-noreply@craft_cost.local}
+      JWT_SECRET: ${JWT_SECRET:-dev_jwt_secret}
+      SESSION_MAX_AGE: ${SESSION_MAX_AGE:-604800}
+      MINT_TOKEN_SECRET: ${MINT_TOKEN_SECRET:-dev_mint_secret}
     depends_on:
       db:
         condition: service_healthy
       redis:
+        condition: service_started
+      pdf:
+        condition: service_started
+      mailhog:
         condition: service_started
     ports:
       - "8000:8000"
@@ -76,12 +91,27 @@ services:
       dockerfile: apps/web/Dockerfile
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-dev_nextauth_secret}
+      API_INTERNAL_URL: http://api:8000
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/app
+      SMTP_HOST: ${SMTP_HOST:-mailhog}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
+      EMAIL_FROM: ${MAIL_FROM:-noreply@craft_cost.local}
       NODE_ENV: production
     depends_on:
       api:
         condition: service_started
+      db:
+        condition: service_healthy
     ports:
       - "3000:3000"
+    command: >-
+      sh -c "npx prisma generate --schema apps/web/prisma/schema.prisma && npx prisma db push --schema apps/web/prisma/schema.prisma && npm run --workspace web start"
 
   pdf:
     build:

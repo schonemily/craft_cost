@@ -1,6 +1,7 @@
 const express = require('express');
 const PDFDocument = require('pdfkit');
 const app = express();
+const SCHEDULE_LIMIT = Number(process.env.SCHEDULE_LIMIT || 24);
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -103,11 +104,11 @@ function section(doc, name, r) {
     );
   }
 
-  // Monthly schedule table (first 12 months)
+  // Monthly schedule table (first N months)
   if (Array.isArray(r.monthly) && r.monthly.length) {
-    doc.fontSize(12).font('Helvetica-Bold').text('Schedule (first 12 months)');
+    doc.fontSize(12).font('Helvetica-Bold').text(`Schedule (first ${SCHEDULE_LIMIT} months)`);
     doc.font('Helvetica');
-    const rows = r.monthly.slice(0, 12).map(m => [
+    const rows = r.monthly.slice(0, SCHEDULE_LIMIT).map(m => [
       String(m.month ?? ''),
       fmtCurrency(m.balance),
       fmtCurrency(m.interest),
@@ -128,8 +129,22 @@ app.post('/render', (req, res) => {
     const { title, snowball, avalanche, strategy } = req.body || {};
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename="debt-plan.pdf"');
-    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    const doc = new PDFDocument({ size: 'A4', margin: 60 });
     doc.pipe(res);
+    // Footer on each page (simple, avoid line wraps)
+    const drawFooter = () => {
+      const footerY = doc.page.height - 30;
+      const leftX = doc.page.margins.left;
+      const rightW = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+      const t = String(title || 'Debt Payoff Plan');
+      doc.font('Helvetica').fontSize(9).fillColor('#6b7280');
+      doc.text(t, leftX, footerY, { width: rightW / 2, align: 'left', lineBreak: false });
+      doc.text(`Page ${doc.page.number}`, leftX + rightW / 2, footerY, { width: rightW / 2, align: 'right', lineBreak: false });
+      doc.fillColor('#000');
+    };
+    drawFooter();
+    doc.on('pageAdded', drawFooter);
+
     doc.fontSize(18).font('Helvetica-Bold').text(String(title || 'Debt Payoff Plan'));
     doc.moveDown();
     if (snowball || avalanche || strategy) {

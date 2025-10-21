@@ -1,3 +1,32 @@
+class MintPayload(BaseModel):
+    email: str
+
+
+@app.post("/v1/auth/mint")
+async def auth_mint(payload: MintPayload, request: Request, db: Session = Depends(get_session)):
+    # Internal-only token minting to support magic-link sessions
+    secret = request.headers.get("X-Internal-Secret")
+    if not secret or secret != MINT_TOKEN_SECRET:
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Invalid secret"})
+    email = payload.email.strip().lower()
+    row = db.execute(select(Users).where(Users.email == email)).scalar_one_or_none()
+    created = False
+    if not row:
+        # create minimal user
+        row = Users(email=email, role="user")
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        created = True
+        # Audit register
+        try:
+            db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                       {"uid": row.id, "act": "auth_register", "payload": json.dumps({"email": email, "source": "mint"})})
+            db.commit()
+        except Exception:
+            pass
+    token = _create_jwt(row.id, getattr(row, "role", "user"))
+    return {"access_token": token, "token_type": "bearer", "created": created}
 import os
 import time
 import uuid
@@ -8,7 +37,7 @@ import logging
 import redis
 from rq import Queue
 from rq.job import Job
-from fastapi import FastAPI, UploadFile, File, HTTPException, status, Depends, Query, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, status, Depends, Query, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
@@ -20,7 +49,10 @@ from .debt_simulator import Debt as SimDebt, simulate as simulate_debts
 from sqlalchemy import select, func, and_, text, String
 from sqlalchemy.orm import Session
 from .db import get_session
-from .models import Transactions, TransactionsRaw, Flag
+from .models import Transactions, TransactionsRaw, Flag, Users, Billing
+from passlib.context import CryptContext
+from datetime import datetime, timedelta, timezone
+import jwt
 from .suggestions_engine import generate_suggestions
 
 app = FastAPI(title="craft_cost API")
@@ -40,6 +72,60 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Auth config and helpers
+JWT_SECRET = os.getenv("JWT_SECRET", "dev_jwt_secret")
+JWT_ALG = "HS256"
+SESSION_MAX_AGE = int(os.getenv("SESSION_MAX_AGE", "604800"))  # 7 days
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+MINT_TOKEN_SECRET = os.getenv("MINT_TOKEN_SECRET", "dev_mint_secret")
+
+def _hash_password(p: str) -> str:
+    return pwd_context.hash(p)
+
+def _verify_password(p: str, ph: str | None) -> bool:
+    if not ph:
+        return False
+    try:
+        return pwd_context.verify(p, ph)
+    except Exception:
+        return False
+
+def _create_jwt(user_id: int, role: str) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "role": role,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=SESSION_MAX_AGE)).timestamp()),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+def _decode_jwt(token: str) -> dict | None:
+    try:
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except Exception:
+        return None
+
+def _get_auth_user(authorization: str | None, db: Session) -> tuple[dict | None, str]:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None, "free"
+    token = authorization.split(" ", 1)[1].strip()
+    claims = _decode_jwt(token)
+    if not claims:
+        return None, "free"
+    try:
+        uid = int(claims.get("sub"))
+    except Exception:
+        return None, "free"
+    user = db.get(Users, uid)
+    if not user:
+        return None, "free"
+    plan = "free"
+    row = db.execute(select(Billing.plan).where(Billing.user_id == uid)).first()
+    if row and row[0]:
+        plan = str(row[0])
+    return {"id": user.id, "email": user.email, "role": getattr(user, "role", "user")}, plan
 
 RATE_LIMIT_RPM = int(os.getenv("RATE_LIMIT_RPM", "120"))
 _redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -94,6 +180,73 @@ async def request_id_and_logging_middleware(request: Request, call_next):
 async def healthz():
     return {"status": "ok", "service": "craft_cost API"}
 
+
+# Auth endpoints (Phase 1: API JWT)
+class RegisterPayload(BaseModel):
+    email: str
+    password: str
+
+
+class LoginPayload(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/v1/auth/register")
+async def auth_register(payload: RegisterPayload, db: Session = Depends(get_session)):
+    if (os.getenv("APP_ENV") or "development").lower() != "development":
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Registration disabled"})
+    email = payload.email.strip().lower()
+    exists = db.execute(select(Users).where(Users.email == email)).first()
+    if exists:
+        raise HTTPException(status_code=400, detail={"code": "email_taken", "message": "Email already registered"})
+    u = Users(email=email, password_hash=_hash_password(payload.password), role="user")
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    token = _create_jwt(u.id, u.role)
+    # Audit register
+    try:
+        db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                   {"uid": u.id, "act": "auth_register", "payload": json.dumps({"email": email})})
+        db.commit()
+    except Exception:
+        pass
+    return {"access_token": token, "token_type": "bearer"}
+
+
+@app.post("/v1/auth/login")
+async def auth_login(payload: LoginPayload, db: Session = Depends(get_session)):
+    email = payload.email.strip().lower()
+    row = db.execute(select(Users).where(Users.email == email)).scalar_one_or_none()
+    if not row or not _verify_password(payload.password, row.password_hash):
+        # Audit (failed) if user exists
+        try:
+            if row:
+                db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'system', :act, :payload)"),
+                           {"uid": row.id, "act": "auth_login_failed", "payload": json.dumps({"email": email})})
+                db.commit()
+        except Exception:
+            pass
+        raise HTTPException(status_code=401, detail={"code": "invalid_credentials", "message": "Invalid email or password"})
+    token = _create_jwt(row.id, getattr(row, "role", "user"))
+    # Audit (success)
+    try:
+        db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                   {"uid": row.id, "act": "auth_login_success", "payload": json.dumps({"email": email})})
+        db.commit()
+    except Exception:
+        pass
+    return {"access_token": token, "token_type": "bearer"}
+
+
+@app.get("/v1/auth/me")
+async def auth_me(authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    return {"user": {**user, "plan": plan}}
+
 def _queue() -> Queue:
     return Queue("default", connection=redis.from_url(_redis_url))
 
@@ -131,8 +284,11 @@ async def list_transactions(
     limit: int = Query(50, ge=1, le=200),
     category: str | None = Query(None),
     period: str | None = Query(None, description="Optional: last_7d | last_30d | last_90d | all_time"),
+    authorization: str | None = Header(default=None),
     db: Session = Depends(get_session),
 ):
+    # Owner filter (BOLA): if Authorization present, limit to current user
+    user, _plan = _get_auth_user(authorization, db)
     # Join normalized tx with raw to expose date/amount/description in one payload
     stmt = (
         select(
@@ -155,6 +311,8 @@ async def list_transactions(
     if period in {"last_7d", "last_30d", "last_90d"}:
         days = 7 if period == "last_7d" else (30 if period == "last_30d" else 90)
         stmt = stmt.where(TransactionsRaw.date >= func.current_date() - days)
+    if user:
+        stmt = stmt.where(Transactions.user_id == user["id"])
 
     rows = db.execute(stmt).all()
     items = [
@@ -339,7 +497,7 @@ class DebtExportRequest(BaseModel):
 
 
 @app.post("/v1/debt/export")
-async def debt_export(payload: DebtExportRequest, db: Session = Depends(get_session)):
+async def debt_export(payload: DebtExportRequest, request: Request, db: Session = Depends(get_session)):
     def to_dict(result):
         if not result:
             return None
@@ -415,8 +573,12 @@ async def debt_export(payload: DebtExportRequest, db: Session = Depends(get_sess
     if payload.format == 'pdf':
         return Response(content=pdf_bytes, media_type='application/pdf', headers={"Content-Disposition": 'inline; filename="debt-plan.pdf"'})
 
+    # Entitlements: allow if user has plan 'plus' OR feature flag pro_enabled is on
+    auth_header = request.headers.get("authorization")
+    _user, plan = _get_auth_user(auth_header, db)
     flag = db.get(Flag, "pro_enabled")
-    if not flag or not flag.bool_value:
+    allowed = (plan == "plus") or (flag and flag.bool_value)
+    if not allowed:
         raise HTTPException(status_code=402, detail={"code": "pro_required", "message": "Upgrade to Pro to email exports"})
     if not payload.email or "@" not in payload.email:
         raise HTTPException(status_code=400, detail={"code": "invalid_email", "message": "Valid email required"})
@@ -471,8 +633,32 @@ async def debt_export(payload: DebtExportRequest, db: Session = Depends(get_sess
 
     smtp_host = os.getenv("SMTP_HOST", "mailhog")
     smtp_port = int(os.getenv("SMTP_PORT", "1025"))
-    with smtplib.SMTP(smtp_host, smtp_port) as s:
-        s.send_message(msg)
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASS")
+    use_ssl = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
+    use_tls = os.getenv("SMTP_USE_TLS", "false").lower() == "true"
+
+    if use_ssl:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port) as s:
+            if smtp_user and smtp_pass:
+                s.login(smtp_user, smtp_pass)
+            s.send_message(msg)
+    else:
+        with smtplib.SMTP(smtp_host, smtp_port) as s:
+            if use_tls:
+                s.starttls()
+            if smtp_user and smtp_pass:
+                s.login(smtp_user, smtp_pass)
+            s.send_message(msg)
+
+    # Audit export email sent (if we have a user)
+    try:
+        if _user:
+            db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                       {"uid": _user["id"], "act": "export_email_sent", "payload": json.dumps({"email": payload.email, "title": payload.title})})
+            db.commit()
+    except Exception:
+        pass
 
     return {"ok": True}
 
@@ -488,14 +674,26 @@ async def get_flags(db: Session = Depends(get_session)):
 
 
 @app.post("/v1/flags")
-async def set_flag(payload: FlagPayload, db: Session = Depends(get_session)):
+async def set_flag(payload: FlagPayload, authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
     # upsert simple bool flag
+    user, _plan = _get_auth_user(authorization, db)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Admin required"})
     existing = db.get(Flag, payload.key)
     if existing:
         existing.bool_value = payload.value
     else:
         db.add(Flag(key=payload.key, bool_value=payload.value))
     db.commit()
+    # Audit flag change (best-effort)
+    try:
+        user, _plan = _get_auth_user(authorization, db)
+        if user:
+            db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'admin', :act, :payload)"),
+                       {"uid": user["id"], "act": "flag_changed", "payload": json.dumps({"key": payload.key, "value": payload.value})})
+            db.commit()
+    except Exception:
+        pass
     return {"ok": True}
 
 # (DB-backed /v1/flags defined above)
@@ -513,15 +711,20 @@ ALLOWED_CATEGORIES = {
 
 
 @app.post("/v1/transactions/{tx_id}/recategorize")
-async def recategorize_transaction(tx_id: int, payload: RecategorizePayload, db: Session = Depends(get_session)):
+async def recategorize_transaction(tx_id: int, payload: RecategorizePayload, authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
     cat = payload.category.strip().lower()
     if cat not in ALLOWED_CATEGORIES:
         raise HTTPException(status_code=400, detail={"code": "invalid_category", "message": "Unsupported category"})
 
-    # Ensure exists, then update
+    # Ensure exists, then update (owner or admin only)
     tx = db.get(Transactions, tx_id)
     if not tx:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Transaction not found"})
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    if (user.get("role") != "admin") and (getattr(tx, "user_id", None) != user.get("id")):
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Not your transaction"})
     # Explicitly cast to Postgres enum to avoid type mismatch on update
     db.execute(text("UPDATE transactions SET category = CAST(:cat AS tx_category) WHERE id = :id"), {"cat": cat, "id": tx_id})
     db.commit()
@@ -589,11 +792,46 @@ async def webhook_plaid(request: Request):
 
 # Retention job trigger (dev/admin)
 @app.post("/v1/admin/retention/transactions_raw")
-async def trigger_retention(days: int = 90, dry_run: bool = True):
+async def trigger_retention(days: int = 90, dry_run: bool = True, authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    # Require admin
+    user, _plan = _get_auth_user(authorization, db)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Admin required"})
     q = _queue()
     job = q.enqueue_call(
         func="worker.jobs.retention.enforce_transactions_raw_retention",
         args=(days, dry_run),
         timeout=120,
     )
+    try:
+        db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'admin', :act, :payload)"),
+                   {"uid": user["id"], "act": "admin_action", "payload": json.dumps({"action": "retention_transactions_raw", "days": days, "dry_run": dry_run})})
+        db.commit()
+    except Exception:
+        pass
     return {"job_id": job.id}
+
+
+class AdminPlanPayload(BaseModel):
+    plan: Literal["free", "plus"]
+
+
+@app.post("/v1/admin/users/{user_id}/plan")
+async def set_user_plan(user_id: int, payload: AdminPlanPayload, authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, _ = _get_auth_user(authorization, db)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Admin required"})
+    # Upsert billing plan
+    row = db.execute(select(Billing).where(Billing.user_id == user_id)).scalar_one_or_none()
+    if row:
+        db.execute(text("UPDATE billing SET plan = CAST(:plan AS plan) WHERE user_id = :uid"), {"plan": payload.plan, "uid": user_id})
+    else:
+        db.execute(text("INSERT INTO billing (user_id, plan) VALUES (:uid, CAST(:plan AS plan))"), {"uid": user_id, "plan": payload.plan})
+    db.commit()
+    try:
+        db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'admin', :act, :payload)"),
+                   {"uid": user["id"], "act": "admin_action", "payload": json.dumps({"action": "set_plan", "target_user_id": user_id, "plan": payload.plan})})
+        db.commit()
+    except Exception:
+        pass
+    return {"ok": True}

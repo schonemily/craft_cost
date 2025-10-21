@@ -1,16 +1,22 @@
 "use client";
 import * as React from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useSession } from 'next-auth/react'
 
 export default function SuggestionsPage() {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+  const { data: session } = useSession()
+  const apiToken = (session as any)?.apiToken as string | undefined
   const query = useQuery<{ items: Suggestion[] }>({
     queryKey: ['suggestions'],
     queryFn: async () => {
-      const r = await fetch(`${apiBase}/v1/suggestions`)
+      const headers: Record<string, string> = {}
+      if (apiToken) headers['Authorization'] = `Bearer ${apiToken}`
+      const r = await fetch(`${apiBase}/v1/suggestions`, { headers })
       if (!r.ok) throw new Error(`suggestions ${r.status}`)
       return r.json() as Promise<{ items: Suggestion[] }>
-    }
+    },
+    enabled: true,
   })
 
   const renderEvidence = React.useCallback((evidence: any[]) => {

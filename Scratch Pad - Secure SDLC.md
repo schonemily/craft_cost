@@ -35,6 +35,38 @@ Legend: [ ] Pending  [x] Completed  [-] In Progress
 - [ ] Object-level authorization checks (avoid BOLA)
 - [ ] Admin-only endpoints guarded and audited
 
+  Plan & Checklist:
+  - [ ] Data model & migrations
+    - [ ] `users` table: id, email (unique), password_hash (nullable for passwordless), role enum(`user`|`admin`), plan enum(`free`|`pro`), created_at
+    - [ ] `sessions` table: id, user_id (FK), expires_at (for revocation/rotation; optional if JWT-only)
+  - [ ] API authentication endpoints (FastAPI)
+    - [ ] `POST /v1/auth/register` (dev only): email+password, bcrypt hash, returns JWT
+    - [ ] `POST /v1/auth/login`: email+password, returns JWT (HS256); env: `JWT_SECRET`, `SESSION_MAX_AGE`
+    - [ ] `GET /v1/auth/me`: current user info (id, email, role, plan)
+  - [ ] Authorization dependencies (guards)
+    - [ ] `get_current_user()` (Bearer JWT -> `User`)
+    - [ ] `require_role('admin')`
+    - [ ] `require_plan('pro')` (entitlements check)
+  - [ ] Entitlements enforcement (plan-based)
+    - [ ] Gate `/v1/debt/export` email flow behind `pro` (already UI-gated; enforce server-side consistently)
+    - [ ] Guard admin/job endpoints (e.g., retention trigger) with `admin` role
+  - [ ] BOLA protections
+    - [ ] Ensure queries filter by owner: `WHERE ... user_id = current_user.id` for list/read/update
+    - [ ] Add minimal tests to assert cross-user access is denied
+  - [ ] Auditing
+    - [ ] Log `auth_login_success`, `auth_login_failed`, `auth_register`, `export_email_sent`, `flag_changed`, `admin_action` into `audit_events`
+  - [ ] Web (Next.js) integration
+    - [ ] Add `next-auth` (Email provider using SMTP) at `apps/web/app/api/auth/[...nextauth]/route.ts`
+    - [ ] Wrap app in `SessionProvider` (`apps/web/app/layout.tsx`); protect pages using `useSession()`
+    - [ ] Forward API calls with bearer token (NextAuth JWT callback to attach API token), or proxy via Next.js route
+  - [ ] Configuration
+    - [ ] `.env.example`: `JWT_SECRET`, `SESSION_MAX_AGE`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `EMAIL_SERVER`/`SMTP_*`, `EMAIL_FROM`
+  - [ ] Phased rollout & acceptance criteria
+    - [ ] Phase 1: API JWT + guards + entitlements; 401/403 as appropriate on protected routes
+    - [ ] Phase 2: NextAuth web gating; signed-in state required to use `/debt` actions
+    - [ ] Phase 3: BOLA checks + tests across transactions/exports
+    - [ ] Phase 4: Audit events recorded for auth/admin/export flows
+
 ## 5) Data Protection & Privacy
 - [x] App-layer AES-GCM for selected PII fields
 - [ ] Encrypt sensitive columns at rest (expand coverage, consider pgcrypto/KMS for prod)
@@ -56,7 +88,7 @@ Legend: [ ] Pending  [x] Completed  [-] In Progress
 - [ ] Pagination cursors hardened and bounded [moved to Future]
 - [ ] Request/response size limits [moved to Future]
 
-## 8) Web UI Security
+## 8) Web UI Security -
 - [x] Security headers in Web (`apps/web/next.config.js`): HSTS, CSP (baseline), Referrer/Permissions
 - [ ] Harden CSP (nonce/strict-dynamic) [moved to Future]
 - [x] CORS: restrict origins per environment (now configurable via CORS_ALLOW_ORIGINS)
@@ -75,7 +107,7 @@ Legend: [ ] Pending  [x] Completed  [-] In Progress
 ## 11) Documents & PDFs
 - [ ] PDF sandboxing & sanitization & storage hardening [moved to Future]
 
-## 12) Logging, Monitoring, and Auditing
+## 12) Logging, Monitoring, and Auditing -
 - [x] JSON logs + request_id middleware in API; baseline security headers
 - [ ] Centralize logs; structured fields (user_id)
 - [x] Basic header redaction (Authorization/Cookie); broader PII redaction policy – Future
@@ -89,7 +121,7 @@ Legend: [ ] Pending  [x] Completed  [-] In Progress
 - [ ] Image hardening and SBOMs [moved to Future]
 - [ ] MinIO bucket policies [moved to Future]
 
-## 14) Testing & Verification
+## 14) Testing & Verification -
 - [x] SAST (Semgrep) in CI for API/Web
 - [ ] DAST smoke (OWASP ZAP baseline) [moved to Future]
 - [-] Security tests (authz/rate limits/idempotency) – minimal added; expand later
