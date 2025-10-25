@@ -4,13 +4,12 @@ import EmailProvider from "next-auth/providers/email";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import prisma from "../../../../lib/prisma";
 
-const apiExternal = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const apiExternal = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010";
 const apiInternal = process.env.API_INTERNAL_URL || apiExternal;
 
 const handler = NextAuth({
   secret: process.env.NEXTAUTH_SECRET,
   session: { strategy: "jwt" },
-  trustHost: true,
   pages: {
     signIn: "/signin",
   },
@@ -35,15 +34,27 @@ const handler = NextAuth({
       async authorize(credentials: any) {
         if (!credentials?.email || !credentials?.password) return null;
         try {
-          const res = await fetch(`${apiInternal}/v1/auth/login`, {
+          const res = await fetch(`${apiInternal}/api/auth/login`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ email: credentials.email, password: credentials.password }),
           });
           if (!res.ok) return null;
           const data = await res.json();
-          const token = data?.access_token;
+          const token = (data as any)?.token || (data as any)?.access_token;
           if (!token) return null;
+          // Prefer user from auth response if present
+          const u1 = (data as any)?.user || {};
+          if (u1 && (u1.id || u1.email)) {
+            return {
+              id: String(u1.id ?? ""),
+              email: String(u1.email ?? credentials.email),
+              role: String(u1.role ?? "user"),
+              plan: String(u1.plan ?? "free"),
+              apiToken: token,
+            } as any;
+          }
+          // Fallback to /v1/auth/me
           const me = await fetch(`${apiInternal}/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
           if (!me.ok) {
             return { id: "0", email: String(credentials.email), role: "user", plan: "free", apiToken: token } as any;

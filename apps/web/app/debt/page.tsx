@@ -16,7 +16,7 @@ import {
 } from "recharts";
 
 export default function DebtPage() {
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010";
   const { data: session } = useSession();
   const apiToken = (session as any)?.apiToken as string | undefined;
   const signedIn = Boolean(session);

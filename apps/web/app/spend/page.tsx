@@ -1,6 +1,7 @@
 "use client";
 import * as React from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useSession } from 'next-auth/react'
 import toast from 'react-hot-toast'
 import { Button } from '@dea/ui'
 
@@ -15,7 +16,10 @@ type Tx = {
 }
 
 export default function SpendPage() {
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010"
+  const { data: session, status } = useSession()
+  const apiToken = (session as any)?.apiToken as string | undefined
+  const enabled = status === 'authenticated' && Boolean(apiToken)
   const [period, setPeriod] = React.useState<'last_7d' | 'last_30d' | 'last_90d' | 'all_time'>('last_30d')
   const [category, setCategory] = React.useState<string | null>(null)
   const queryClient = useQueryClient()
@@ -28,10 +32,13 @@ export default function SpendPage() {
   const summaryQuery = useQuery<{ period: string; total: number; by_category: Record<string, number> }>({
     queryKey: ['summary', period],
     queryFn: async () => {
-      const r = await fetch(`${apiBase}/v1/spend/summary?period=${period}`)
+      const headers: Record<string, string> = {}
+      if (apiToken) headers['Authorization'] = `Bearer ${apiToken}`
+      const r = await fetch(`${apiBase}/v1/spend/summary?period=${period}`, { headers })
       if (!r.ok) throw new Error(`summary ${r.status}`)
       return r.json() as Promise<{ period: string; total: number; by_category: Record<string, number> }>
     },
+    enabled,
   })
 
   const txQuery = useInfiniteQuery<{ items: Tx[]; next_cursor: number | null }>({
@@ -43,12 +50,15 @@ export default function SpendPage() {
       url.searchParams.set('limit', '20')
       if (category) url.searchParams.set('category', category)
       if (period) url.searchParams.set('period', period)
-      const r = await fetch(url.toString())
+      const headers: Record<string, string> = {}
+      if (apiToken) headers['Authorization'] = `Bearer ${apiToken}`
+      const r = await fetch(url.toString(), { headers })
       if (!r.ok) throw new Error(`transactions ${r.status}`)
       return r.json() as Promise<{ items: Tx[]; next_cursor: number | null }>
     },
     initialPageParam: undefined,
     getNextPageParam: (lastPage: { next_cursor: number | null }) => lastPage.next_cursor ?? undefined,
+    enabled,
   })
 
   // Toast query errors
@@ -65,7 +75,7 @@ export default function SpendPage() {
       const normalized = category && category.length ? category : 'other'
       const res = await fetch(`${apiBase}/v1/transactions/${id}/recategorize`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {}) },
         body: JSON.stringify({ category: normalized })
       })
       if (!res.ok) throw new Error(`recat ${res.status}`)

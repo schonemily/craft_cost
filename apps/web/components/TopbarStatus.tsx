@@ -2,7 +2,7 @@
 import * as React from "react";
 
 export default function TopbarStatus() {
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010";
   const [ok, setOk] = React.useState<boolean | null>(null);
   const [csvOn, setCsvOn] = React.useState<boolean | null>(null);
 

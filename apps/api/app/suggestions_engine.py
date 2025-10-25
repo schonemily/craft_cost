@@ -52,7 +52,7 @@ def _guess_category(r: Tuple) -> str | None:
         return "personal"
     return None
 
-def _recent_joined(db: Session, days: int = 90) -> List[Tuple]:
+def _recent_joined(db: Session, days: int = 90, user_id: int | None = None) -> List[Tuple]:
     since = func.current_date() - days
     stmt = (
         select(
@@ -67,6 +67,8 @@ def _recent_joined(db: Session, days: int = 90) -> List[Tuple]:
         .join(TransactionsRaw, Transactions.tx_id == TransactionsRaw.id)
         .where(TransactionsRaw.date >= since)
     )
+    if user_id is not None:
+        stmt = stmt.where(Transactions.user_id == user_id)
     return db.execute(stmt).all()
 
 def _group_by_merchant(rows: List[Tuple]) -> Dict[str, List[Tuple]]:
@@ -215,8 +217,8 @@ def suggest_reduce_dining(rows: List[Tuple]) -> List[Suggestion]:
         evidence=[{"total": total}],
     )]
 
-def generate_suggestions(db: Session) -> List[Dict[str, Any]]:
-    rows = _recent_joined(db, days=90)
+def generate_suggestions(db: Session, user_id: int | None = None) -> List[Dict[str, Any]]:
+    rows = _recent_joined(db, days=90, user_id=user_id)
     suggestions: List[Suggestion] = []
     for fn in (
         suggest_recurring_subscriptions,

@@ -2,26 +2,48 @@
 import * as React from "react";
 import { signIn } from "next-auth/react";
 import toast from "react-hot-toast";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
+import { Suspense } from "react";
 
-export default function SignInPage() {
+function SignInInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { data: session } = useSession();
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [sending, setSending] = React.useState(false);
 
+  React.useEffect(() => {
+    if (session) {
+      const cb = searchParams.get("callbackUrl") || "/";
+      router.replace(cb);
+    }
+  }, [session, router, searchParams]);
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     try {
+      const cb = searchParams.get("callbackUrl") || "/";
       const res = await signIn("credentials", {
         email,
         password,
-        redirect: true,
-        callbackUrl: "/",
+        redirect: false,
+        callbackUrl: cb,
       });
-      if ((res as any)?.error) {
+      if ((res as any)?.error || res === undefined) {
         toast.error("Invalid credentials");
+      } else if ((res as any)?.ok || (res as any)?.url) {
+        router.replace((res as any)?.url || cb);
       }
+    } catch {
+      toast.error("Sign-in failed");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function onMagicLink(e: React.FormEvent) {
     e.preventDefault();
@@ -37,12 +59,6 @@ export default function SignInPage() {
       toast.error("Failed to send magic link");
     } finally {
       setSending(false);
-    }
-  }
-    } catch {
-      toast.error("Sign-in failed");
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -88,5 +104,13 @@ export default function SignInPage() {
         </button>
       </form>
     </div>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-sm text-sm text-[var(--muted)]">Loading…</div>}>
+      <SignInInner />
+    </Suspense>
   );
 }

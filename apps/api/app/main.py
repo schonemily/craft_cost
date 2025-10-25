@@ -1,32 +1,3 @@
-class MintPayload(BaseModel):
-    email: str
-
-
-@app.post("/v1/auth/mint")
-async def auth_mint(payload: MintPayload, request: Request, db: Session = Depends(get_session)):
-    # Internal-only token minting to support magic-link sessions
-    secret = request.headers.get("X-Internal-Secret")
-    if not secret or secret != MINT_TOKEN_SECRET:
-        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Invalid secret"})
-    email = payload.email.strip().lower()
-    row = db.execute(select(Users).where(Users.email == email)).scalar_one_or_none()
-    created = False
-    if not row:
-        # create minimal user
-        row = Users(email=email, role="user")
-        db.add(row)
-        db.commit()
-        db.refresh(row)
-        created = True
-        # Audit register
-        try:
-            db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
-                       {"uid": row.id, "act": "auth_register", "payload": json.dumps({"email": email, "source": "mint"})})
-            db.commit()
-        except Exception:
-            pass
-    token = _create_jwt(row.id, getattr(row, "role", "user"))
-    return {"access_token": token, "token_type": "bearer", "created": created}
 import os
 import time
 import uuid
@@ -52,6 +23,7 @@ from .db import get_session
 from .models import Transactions, TransactionsRaw, Flag, Users, Billing
 from passlib.context import CryptContext
 from datetime import datetime, timedelta, timezone
+import random
 import jwt
 from .suggestions_engine import generate_suggestions
 
@@ -63,7 +35,7 @@ if cors_env:
     allowed = [o.strip() for o in cors_env.split(",") if o.strip()]
 else:
     # Dev default
-    allowed = ["http://localhost:3000"]
+    allowed = ["http://localhost:3000", "http://localhost:3001", "http://localhost:5173", "http://127.0.0.1:3000"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -79,6 +51,60 @@ JWT_ALG = "HS256"
 SESSION_MAX_AGE = int(os.getenv("SESSION_MAX_AGE", "604800"))  # 7 days
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 MINT_TOKEN_SECRET = os.getenv("MINT_TOKEN_SECRET", "dev_mint_secret")
+USE_LOCAL_DB = str(os.getenv("USE_LOCAL_DB", "false")).lower() in {"1", "true", "yes"}
+
+ADMIN_EMAILS = {e.strip().lower() for e in (os.getenv("ADMIN_EMAILS", "").split(",") if os.getenv("ADMIN_EMAILS") else [])}
+
+def _role_for(email: str, default_role: str = "user") -> str:
+    try:
+        return "admin" if email.strip().lower() in ADMIN_EMAILS else default_role
+    except Exception:
+        return default_role
+
+try:
+    from . import local_users as LU
+except Exception:
+    LU = None
+
+class MintPayload(BaseModel):
+    email: str
+
+@app.post("/v1/auth/mint")
+async def auth_mint(payload: MintPayload, request: Request, db: Session = Depends(get_session)):
+    # Internal-only token minting to support magic-link sessions
+    secret = request.headers.get("X-Internal-Secret")
+    if not secret or secret != MINT_TOKEN_SECRET:
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Invalid secret"})
+    email = payload.email.strip().lower()
+    # Prefer local users store in dev mode to avoid ORM/DB schema drift
+    if USE_LOCAL_DB and LU:
+        created = False
+        u = LU.get_by_email(email)
+        if not u:
+            u = LU.add_user(email, None, role=_role_for(email, "user"))
+            created = True
+        uid = int(u["id"])
+        token = _create_jwt(uid, _role_for(email, str(u.get("role") or "user")))
+        return {"access_token": token, "token_type": "bearer", "created": created}
+    # Fallback: relational DB user creation
+    row = db.execute(select(Users).where(Users.email == email)).scalar_one_or_none()
+    created = False
+    if not row:
+        # create minimal user
+        row = Users(email=email, role="user")
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        created = True
+        # Audit register
+        try:
+            db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                       {"uid": row.id, "act": "auth_register", "payload": json.dumps({"email": email, "source": "mint"})})
+            db.commit()
+        except Exception:
+            pass
+    token = _create_jwt(row.id, _role_for(email, getattr(row, "role", "user")))
+    return {"access_token": token, "token_type": "bearer", "created": created}
 
 def _hash_password(p: str) -> str:
     return pwd_context.hash(p)
@@ -118,6 +144,11 @@ def _get_auth_user(authorization: str | None, db: Session) -> tuple[dict | None,
         uid = int(claims.get("sub"))
     except Exception:
         return None, "free"
+    if USE_LOCAL_DB and LU:
+        u = LU.get_by_id(uid)
+        if not u:
+            return None, "free"
+        return {"id": int(u.get("id")), "email": str(u.get("email") or ""), "role": _role_for(str(u.get("email") or ""), str(u.get("role") or "user"))}, "free"
     user = db.get(Users, uid)
     if not user:
         return None, "free"
@@ -180,6 +211,11 @@ async def request_id_and_logging_middleware(request: Request, call_next):
 async def healthz():
     return {"status": "ok", "service": "craft_cost API"}
 
+# CRA/Vite-friendly aliases
+@app.get("/api/status")
+async def api_status():
+    return {"status": "ok", "service": "craft_cost API"}
+
 
 # Auth endpoints (Phase 1: API JWT)
 class RegisterPayload(BaseModel):
@@ -192,23 +228,211 @@ class LoginPayload(BaseModel):
     password: str
 
 
+# Signup payload must be defined before any route references it
+class SignupPayload(BaseModel):
+    name: str
+    email: str
+    password: str
+
+
 @app.post("/v1/auth/register")
 async def auth_register(payload: RegisterPayload, db: Session = Depends(get_session)):
     if (os.getenv("APP_ENV") or "development").lower() != "development":
         raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Registration disabled"})
     email = payload.email.strip().lower()
-    exists = db.execute(select(Users).where(Users.email == email)).first()
-    if exists:
+    if USE_LOCAL_DB and LU:
+        # Explicit local user handling
+        existing = LU.get_by_email(email)
+        if existing:
+            if _verify_password(payload.password, str(existing.get("password_hash") or "")):
+                token = _create_jwt(int(existing["id"]), _role_for(email, str(existing.get("role") or "user")))
+                try:
+                    db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                               {"uid": int(existing["id"]), "act": "auth_register_idempotent", "payload": json.dumps({"email": email, "local": True})})
+                    db.commit()
+                except Exception:
+                    pass
+                return {"access_token": token, "token_type": "bearer"}
+
+
+@app.post("/api/auth/signup")
+async def api_auth_signup(payload: SignupPayload, db: Session = Depends(get_session)):
+    try:
+        nm = (payload.name or "").strip()
+        em = (payload.email or "").strip().lower()
+        pw = payload.password or ""
+        if len(nm) < 2:
+            raise HTTPException(status_code=400, detail={"code": "invalid_name", "message": "Name must be at least 2 characters"})
+        if "@" not in em or "." not in em:
+            raise HTTPException(status_code=400, detail={"code": "invalid_email", "message": "Enter a valid email"})
+        if len(pw) < 8:
+            raise HTTPException(status_code=400, detail={"code": "weak_password", "message": "Password must be at least 8 characters"})
+        result = await signup(payload, db)
+        token = result.get("access_token") if isinstance(result, dict) else None
+        if not token:
+            raise HTTPException(status_code=500, detail={"code": "signup_failed", "message": "Failed to create account"})
+        user, plan = _get_auth_user(f"Bearer {token}", db)
+        return {"success": True, "token": token, "user": {**(user or {}), "plan": plan}}
+    except HTTPException as e:
+        return JSONResponse(status_code=e.status_code, content={"success": False, "error": e.detail})
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(payload: LoginPayload, db: Session = Depends(get_session)):
+    try:
+        em = (payload.email or "").strip().lower()
+        pw = payload.password or ""
+        if not em or not pw:
+            raise HTTPException(status_code=400, detail={"code": "missing_fields", "message": "Email and password are required"})
+        if "@" not in em or "." not in em:
+            raise HTTPException(status_code=400, detail={"code": "invalid_email", "message": "Enter a valid email"})
+        result = await login(payload, db)
+        token = result.get("access_token") if isinstance(result, dict) else None
+        if not token:
+            raise HTTPException(status_code=401, detail={"code": "invalid_credentials", "message": "Invalid email or password"})
+        user, plan = _get_auth_user(f"Bearer {token}", db)
+        return {"success": True, "token": token, "user": {**(user or {}), "plan": plan}}
+    except HTTPException as e:
+        return JSONResponse(status_code=e.status_code, content={"success": False, "error": e.detail})
+
+
+@app.post("/api/login")
+async def api_login(payload: LoginPayload, db: Session = Depends(get_session)):
+    return await login(payload, db)
+
+
+# Aliases to meet simplified API spec
+
+
+@app.post("/signup")
+async def signup(payload: SignupPayload, db: Session = Depends(get_session)):
+    # Mirror /v1/auth/register, accept name but store it only in audit payload
+    if (os.getenv("APP_ENV") or "development").lower() != "development":
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Registration disabled"})
+    email = payload.email.strip().lower()
+    if USE_LOCAL_DB and LU:
+        # Explicit local user handling
+        existing = LU.get_by_email(email)
+        if existing:
+            if _verify_password(payload.password, str(existing.get("password_hash") or "")):
+                token = _create_jwt(int(existing["id"]), _role_for(email, str(existing.get("role") or "user")))
+                try:
+                    db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                               {"uid": int(existing["id"]), "act": "auth_register_idempotent", "payload": json.dumps({"email": email, "name": payload.name, "local": True})})
+                    db.commit()
+                except Exception:
+                    pass
+                return {"access_token": token, "token_type": "bearer"}
+            # Else, check relational DB for a minted user or idempotent match
+            row = db.execute(select(Users).where(Users.email == email)).scalar_one_or_none()
+            if row and not getattr(row, "password_hash", None):
+                row.password_hash = _hash_password(payload.password)
+                row.role = _role_for(email, getattr(row, "role", "user"))
+                db.add(row)
+                db.commit()
+                db.refresh(row)
+                token = _create_jwt(row.id, row.role)
+                return {"access_token": token, "token_type": "bearer"}
+            if row and _verify_password(payload.password, row.password_hash or ""):
+                token = _create_jwt(row.id, _role_for(email, getattr(row, "role", "user")))
+                return {"access_token": token, "token_type": "bearer"}
+            raise HTTPException(status_code=400, detail={"code": "email_taken", "message": "Email already registered"})
+        # Create new local user
+        u = LU.add_user(email, _hash_password(payload.password), role=_role_for(email, "user"))
+        token = _create_jwt(int(u["id"]), _role_for(email, str(u.get("role") or "user")))
+        try:
+            db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                       {"uid": int(u["id"]), "act": "auth_register", "payload": json.dumps({"email": email, "name": payload.name, "local": True})})
+            db.commit()
+        except Exception:
+            pass
+        return {"access_token": token, "token_type": "bearer"}
+    row = db.execute(select(Users).where(Users.email == email)).scalar_one_or_none()
+    if row:
+        # Upgrade a minted user (no password yet) by setting credentials now
+        if not getattr(row, "password_hash", None):
+            row.password_hash = _hash_password(payload.password)
+            row.role = _role_for(email, getattr(row, "role", "user"))
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            token = _create_jwt(row.id, row.role)
+            try:
+                db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                           {"uid": row.id, "act": "auth_register", "payload": json.dumps({"email": email, "name": payload.name, "upgraded": True})})
+                db.commit()
+            except Exception:
+                pass
+            return {"access_token": token, "token_type": "bearer"}
+        # If user exists with password, allow idempotent sign-up when password matches
+        if _verify_password(payload.password, row.password_hash or ""):
+            token = _create_jwt(row.id, _role_for(email, getattr(row, "role", "user")))
+            try:
+                db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                           {"uid": row.id, "act": "auth_register_idempotent", "payload": json.dumps({"email": email, "name": payload.name})})
+                db.commit()
+            except Exception:
+                pass
+            return {"access_token": token, "token_type": "bearer"}
         raise HTTPException(status_code=400, detail={"code": "email_taken", "message": "Email already registered"})
-    u = Users(email=email, password_hash=_hash_password(payload.password), role="user")
+    u = Users(email=email, password_hash=_hash_password(payload.password), role=_role_for(email, "user"))
     db.add(u)
     db.commit()
     db.refresh(u)
     token = _create_jwt(u.id, u.role)
-    # Audit register
+    # Audit register with name (best-effort)
     try:
         db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
-                   {"uid": u.id, "act": "auth_register", "payload": json.dumps({"email": email})})
+                   {"uid": u.id, "act": "auth_register", "payload": json.dumps({"email": email, "name": payload.name})})
+        db.commit()
+    except Exception:
+        pass
+    return {"access_token": token, "token_type": "bearer"}
+
+
+@app.post("/api/signup")
+async def api_signup(payload: SignupPayload, db: Session = Depends(get_session)):
+    return await signup(payload, db)
+
+
+@app.post("/login")
+async def login(payload: LoginPayload, db: Session = Depends(get_session)):
+    # Mirror /v1/auth/login
+    email = payload.email.strip().lower()
+    if USE_LOCAL_DB and LU:
+        u = LU.get_by_email(email)
+        if not u or not _verify_password(payload.password, str(u.get("password_hash") or "")):
+            try:
+                if u:
+                    db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'system', :act, :payload)"),
+                               {"uid": int(u["id"]), "act": "auth_login_failed", "payload": json.dumps({"email": email, "alias": True, "local": True})})
+                    db.commit()
+            except Exception:
+                pass
+            raise HTTPException(status_code=401, detail={"code": "invalid_credentials", "message": "Invalid email or password"})
+        token = _create_jwt(int(u["id"]), _role_for(email, str(u.get("role") or "user")))
+        try:
+            db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                       {"uid": int(u["id"]), "act": "auth_login_success", "payload": json.dumps({"email": email, "alias": True, "local": True})})
+            db.commit()
+        except Exception:
+            pass
+        return {"access_token": token, "token_type": "bearer"}
+    row = db.execute(select(Users).where(Users.email == email)).scalar_one_or_none()
+    if not row or not _verify_password(payload.password, row.password_hash):
+        # Best-effort audit
+        try:
+            if row:
+                db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'system', :act, :payload)"),
+                           {"uid": row.id, "act": "auth_login_failed", "payload": json.dumps({"email": email, "alias": True})})
+                db.commit()
+        except Exception:
+            pass
+        raise HTTPException(status_code=401, detail={"code": "invalid_credentials", "message": "Invalid email or password"})
+    token = _create_jwt(row.id, _role_for(email, getattr(row, "role", "user")))
+    try:
+        db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                   {"uid": row.id, "act": "auth_login_success", "payload": json.dumps({"email": email, "alias": True})})
         db.commit()
     except Exception:
         pass
@@ -218,6 +442,25 @@ async def auth_register(payload: RegisterPayload, db: Session = Depends(get_sess
 @app.post("/v1/auth/login")
 async def auth_login(payload: LoginPayload, db: Session = Depends(get_session)):
     email = payload.email.strip().lower()
+    if USE_LOCAL_DB and LU:
+        u = LU.get_by_email(email)
+        if not u or not _verify_password(payload.password, str(u.get("password_hash") or "")):
+            try:
+                if u:
+                    db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'system', :act, :payload)"),
+                               {"uid": int(u["id"]), "act": "auth_login_failed", "payload": json.dumps({"email": email, "local": True})})
+                    db.commit()
+            except Exception:
+                pass
+            raise HTTPException(status_code=401, detail={"code": "invalid_credentials", "message": "Invalid email or password"})
+        token = _create_jwt(int(u["id"]), _role_for(email, str(u.get("role") or "user")))
+        try:
+            db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
+                       {"uid": int(u["id"]), "act": "auth_login_success", "payload": json.dumps({"email": email, "local": True})})
+            db.commit()
+        except Exception:
+            pass
+        return {"access_token": token, "token_type": "bearer"}
     row = db.execute(select(Users).where(Users.email == email)).scalar_one_or_none()
     if not row or not _verify_password(payload.password, row.password_hash):
         # Audit (failed) if user exists
@@ -229,7 +472,7 @@ async def auth_login(payload: LoginPayload, db: Session = Depends(get_session)):
         except Exception:
             pass
         raise HTTPException(status_code=401, detail={"code": "invalid_credentials", "message": "Invalid email or password"})
-    token = _create_jwt(row.id, getattr(row, "role", "user"))
+    token = _create_jwt(row.id, _role_for(email, getattr(row, "role", "user")))
     # Audit (success)
     try:
         db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'user', :act, :payload)"),
@@ -253,14 +496,22 @@ def _queue() -> Queue:
 
 # Week 2: enqueue CSV ingestion job (no DB writes yet)
 @app.post("/v1/transactions/csv")
-async def upload_csv(file: UploadFile = File(...)):
+async def upload_csv(
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_session),
+):
     data = await file.read()
+    # Require auth; determine owner for ingestion
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"])
     q = _queue()
-    # pass function path so worker can import its own code
     job = q.enqueue_call(
         func="worker.jobs.csv_ingest_db.ingest_csv",
         args=(data,),
-        kwargs={},
+        kwargs={"user_id": uid, "user_email": user["email"]},
         timeout=300,
     )
     return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content={"job_id": job.id})
@@ -287,8 +538,10 @@ async def list_transactions(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_session),
 ):
-    # Owner filter (BOLA): if Authorization present, limit to current user
+    # Require auth and owner filter (BOLA)
     user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
     # Join normalized tx with raw to expose date/amount/description in one payload
     stmt = (
         select(
@@ -311,8 +564,7 @@ async def list_transactions(
     if period in {"last_7d", "last_30d", "last_90d"}:
         days = 7 if period == "last_7d" else (30 if period == "last_30d" else 90)
         stmt = stmt.where(TransactionsRaw.date >= func.current_date() - days)
-    if user:
-        stmt = stmt.where(Transactions.user_id == user["id"])
+    stmt = stmt.where(Transactions.user_id == user["id"])
 
     rows = db.execute(stmt).all()
     items = [
@@ -331,7 +583,7 @@ async def list_transactions(
     return {"items": items, "next_cursor": next_cursor}
 
 @app.get("/v1/spend/summary")
-async def spend_summary(period: str = "last_30d", db: Session = Depends(get_session)):
+async def spend_summary(period: str = "last_30d", authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
     # Minimal: sum by category from normalized transactions joined to raw amounts
     if period == "last_7d":
         days = 7
@@ -350,6 +602,10 @@ async def spend_summary(period: str = "last_30d", db: Session = Depends(get_sess
     )
     if days is not None:
         stmt = stmt.where(TransactionsRaw.date >= func.current_date() - days)
+    # Owner scoping
+    user, _plan = _get_auth_user(authorization, db)
+    if user:
+        stmt = stmt.where(Transactions.user_id == user["id"])
     stmt = stmt.group_by(Transactions.category)
     rows = db.execute(stmt).all()
     by_category = { (k or "uncategorized"): float(v or 0) for k, v in rows }
@@ -357,9 +613,109 @@ async def spend_summary(period: str = "last_30d", db: Session = Depends(get_sess
     return {"period": period, "total": total, "by_category": by_category}
 
 
+@app.post("/v1/transactions/seed")
+async def seed_transactions(count: int = 50, authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    # Dev-only convenience to populate demo data
+    if (os.getenv("APP_ENV") or "development").lower() != "development":
+        raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Seeding disabled"})
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"])  # seed for the current user
+
+    n = max(1, min(int(count or 0), 200))
+    merchants = [
+        ("SuperMart", "grocery"),
+        ("City Utilities", "utilities"),
+        ("Acme Telco", "telco"),
+        ("QuickBite", "dining"),
+        ("Prime Video", "subscriptions"),
+        ("Gym+", "personal"),
+        ("RideNow", "transport"),
+        ("Landlord LLC", "housing"),
+        ("PharmaCare", "health"),
+        ("Cinema Plaza", "entertainment"),
+    ]
+    seeded = 0
+    total_amount = 0.0
+    for i in range(n):
+        merchant, default_cat = random.choice(merchants)
+        # 85% expenses (negative), 15% income (positive)
+        if random.random() < 0.15:
+            cat = "income"
+            amt = round(random.uniform(1500, 3500), 2)
+            desc = "Monthly salary"
+        else:
+            cat = default_cat
+            amt = round(-1 * random.uniform(5, 250), 2)
+            desc = f"{merchant} purchase"
+        d = (datetime.now().date() - timedelta(days=random.randint(0, 90)))
+
+        # Insert into raw table (minimal columns for wide DB compatibility)
+        try:
+            tx_raw_id_row = db.execute(text(
+                """
+                INSERT INTO transactions_raw (user_id, date, amount, description, merchant_raw)
+                VALUES (:user_id, :date, :amount, :description, :merchant_raw)
+                RETURNING id
+                """
+            ), {
+                "user_id": uid,
+                "date": d,
+                "amount": amt,
+                "description": desc,
+                "merchant_raw": merchant,
+            }).fetchone()
+            tx_raw_id = int(tx_raw_id_row[0]) if tx_raw_id_row else None
+            if not tx_raw_id:
+                continue
+            # Insert normalized transaction; handle absence of tx_category enum gracefully
+            has_enum = False
+            try:
+                chk = db.execute(text("SELECT 1 FROM pg_type WHERE typname = 'tx_category'"))
+                has_enum = bool(chk.first())
+            except Exception:
+                has_enum = False
+            if has_enum:
+                db.execute(text(
+                    """
+                    INSERT INTO transactions (user_id, tx_id, category, merchant_norm)
+                    VALUES (:user_id, :tx_id, CAST(:category AS tx_category), :merchant_norm)
+                    """
+                ), {
+                    "user_id": uid,
+                    "tx_id": tx_raw_id,
+                    "category": cat,
+                    "merchant_norm": merchant,
+                })
+            else:
+                db.execute(text(
+                    """
+                    INSERT INTO transactions (user_id, tx_id, category, merchant_norm)
+                    VALUES (:user_id, :tx_id, :category, :merchant_norm)
+                    """
+                ), {
+                    "user_id": uid,
+                    "tx_id": tx_raw_id,
+                    "category": cat,
+                    "merchant_norm": merchant,
+                })
+            seeded += 1
+            total_amount += amt
+        except Exception:
+            # skip on error; continue best-effort in dev
+            continue
+    try:
+        db.commit()
+    except Exception:
+        pass
+    return {"seeded": seeded, "user_id": uid, "total_amount": round(total_amount, 2)}
+
+
 @app.get("/v1/suggestions")
-async def get_suggestions(db: Session = Depends(get_session)):
-    items = generate_suggestions(db)
+async def get_suggestions(authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, _plan = _get_auth_user(authorization, db)
+    items = generate_suggestions(db, user_id=(user["id"] if user else None))
     return {"items": items}
 
 

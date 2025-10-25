@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
+import Link from "next/link";
 
 export default function AuthButtons() {
   const { data: session, status } = useSession();
@@ -10,12 +11,20 @@ export default function AuthButtons() {
 
   if (!session) {
     return (
-      <button
-        onClick={() => signIn()}
-        className="rounded border border-[var(--border)]/60 px-3 py-1 text-xs hover:bg-white/5"
-      >
-        Sign in
-      </button>
+      <div className="flex items-center gap-2">
+        <Link
+          href="/signup"
+          className="rounded border border-[var(--border)]/60 px-3 py-1 text-xs hover:bg-white/5"
+        >
+          Sign up
+        </Link>
+        <button
+          onClick={() => signIn()}
+          className="rounded border border-[var(--border)]/60 px-3 py-1 text-xs hover:bg-white/5"
+        >
+          Sign in
+        </button>
+      </div>
     );
   }
 
@@ -26,7 +35,7 @@ export default function AuthButtons() {
     <div className="flex items-center gap-2 text-xs">
       <span className="text-[var(--muted)]">{email} · {plan}</span>
       <button
-        onClick={() => signOut()}
+        onClick={() => { try { localStorage.removeItem('userName'); } catch {} ; signOut(); }}
         className="rounded border border-[var(--border)]/60 px-3 py-1 hover:bg-white/5"
       >
         Sign out

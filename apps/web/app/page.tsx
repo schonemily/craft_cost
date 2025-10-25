@@ -4,7 +4,7 @@ import { Button } from "@dea/ui";
 import toast from "react-hot-toast";
 
 export default function Page() {
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010";
   const [plaidEnabled, setPlaidEnabled] = React.useState<boolean>(false);
 
   React.useEffect(() => {

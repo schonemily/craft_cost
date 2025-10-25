@@ -2,8 +2,11 @@
 import * as React from "react";
 import toast from "react-hot-toast";
 import { Button } from "@dea/ui";
+import { useSession } from "next-auth/react";
 
 export default function UploadPage() {
+  const { data: session } = useSession();
+  const apiToken = (session as any)?.apiToken as string | undefined;
   const [jobId, setJobId] = React.useState<string | null>(null);
   const [status, setStatus] = React.useState<any>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -14,7 +17,7 @@ export default function UploadPage() {
   const [uploading, setUploading] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
 
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010";
 
   // Delete dataset control removed (API endpoint removed)
 
@@ -33,7 +36,11 @@ export default function UploadPage() {
     fd.append("file", input.files[0]);
     setUploading(true);
     try {
-      const res = await fetch(`${apiBase}/v1/transactions/csv`, { method: "POST", body: fd });
+      const res = await fetch(`${apiBase}/v1/transactions/csv`, {
+        method: "POST",
+        headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : undefined,
+        body: fd,
+      });
       if (!res.ok) {
         throw new Error(`Upload failed (${res.status})`);
       }

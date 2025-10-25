@@ -7,7 +7,7 @@ const csp = [
   "img-src 'self' data: blob:",
   "style-src 'self' 'unsafe-inline'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
-  "connect-src 'self' http://localhost:8000",
+  "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 http://localhost:8010 http://127.0.0.1:8010 ws: wss:",
 ].join('; ')
 
 const nextConfig = {
