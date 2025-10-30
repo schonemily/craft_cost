@@ -14,14 +14,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-      - name: Install web deps
+          cache: 'npm'
+      - name: Install dependencies (workspaces)
         run: |
-          cd apps/web
           npm install
-      - name: Build web
+      - name: Generate Prisma Client
         run: |
-          cd apps/web
-          npm run build
+          npx prisma generate --schema apps/web/prisma/schema.prisma
+      - name: Build web
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          NEXTAUTH_SECRET: test_secret
+          NEXTAUTH_URL: http://localhost:3001
+        run: |
+          npm run --workspace web build
 
   api:
     runs-on: ubuntu-latest
