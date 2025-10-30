@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 800">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1020"/>
+      <stop offset="100%" stop-color="#121933"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fb923c"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#bg)"/>
+  <!-- grid -->
+  <g opacity="0.2" stroke="#fff">
+    <path d="M0 720H1280M0 640H1280M0 560H1280M0 480H1280M0 400H1280M0 320H1280M0 240H1280M0 160H1280M0 80H1280" stroke-width="1"/>
+    <path d="M80 0V800M160 0V800M240 0V800M320 0V800M400 0V800M480 0V800M560 0V800M640 0V800M720 0V800M800 0V800M880 0V800M960 0V800M1040 0V800M1120 0V800M1200 0V800" stroke-width="1"/>
+  </g>
+  <!-- bars -->
+  <g>
+    <rect x="200" y="500" width="80" height="180" rx="8" fill="url(#accent)"/>
+    <rect x="320" y="420" width="80" height="260" rx="8" fill="url(#brand)"/>
+    <rect x="440" y="460" width="80" height="220" rx="8" fill="#60a5fa"/>
+    <rect x="560" y="360" width="80" height="320" rx="8" fill="#34d399"/>
+    <rect x="680" y="420" width="80" height="260" rx="8" fill="#f472b6"/>
+  </g>
+  <!-- pie -->
+  <g transform="translate(980,420)">
+    <circle r="110" fill="#1f2937" opacity="0.6"/>
+    <path d="M0 0 L110 0 A110 110 0 0 1 33 -104 Z" fill="#60a5fa"/>
+    <path d="M0 0 L33 -104 A110 110 0 0 1 -92 -60 Z" fill="#34d399"/>
+    <path d="M0 0 L-92 -60 A110 110 0 0 1 0 110 Z" fill="url(#accent)"/>
+    <path d="M0 0 L0 110 A110 110 0 0 1 110 0 Z" fill="url(#brand)"/>
+  </g>
+</svg>

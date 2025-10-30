@@ -9,6 +9,7 @@ import Image from 'next/image'
 import { Inter } from 'next/font/google'
 import TopbarStatus from '../components/TopbarStatus'
 import QueryProvider from '../components/QueryProvider'
+import NavLinks from '../components/NavLinks'
 import { Toaster } from 'react-hot-toast'
 import SessionProvider from '../components/SessionProvider'
 import AuthButtons from '../components/AuthButtons'
@@ -21,24 +22,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${inter.className} min-h-screen`}>
         <SessionProvider>
           <header className="border-b border-[var(--border)]/60 bg-[var(--surface)]/60 backdrop-blur">
-            <nav className="container flex items-center justify-between py-3">
+            <div className="container flex items-center justify-between py-3">
               <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
                 <Image src="/logo.svg" alt="craft_cost" width={16} height={16} className="opacity-90" />
                 craft_cost
               </Link>
-              <div className="flex items-center gap-6">
-                <div className="flex items-center gap-4 text-sm text-[var(--muted)]">
-                  <Link href="/" className="hover:text-white">Home</Link>
-                  <Link href="/upload" className="hover:text-white">Upload CSV</Link>
-                  <Link href="/spend" className="hover:text-white">Spend</Link>
-                  <Link href="/suggestions" className="hover:text-white">Suggestions</Link>
-                  <Link href="/debt" className="hover:text-white">Debt</Link>
-                  <Link href="/flags" className="hover:text-white">Flags</Link>
-                </div>
+              <div className="flex items-center gap-4">
                 <TopbarStatus />
                 <AuthButtons />
               </div>
-            </nav>
+            </div>
+            <NavLinks />
           </header>
           <QueryProvider>
             <main className="container py-8">

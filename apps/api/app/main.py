@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from typing import List, Optional, Literal
+import stripe
 import httpx
 import smtplib
 from email.message import EmailMessage
@@ -26,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 import random
 import jwt
 from .suggestions_engine import generate_suggestions
+from datetime import datetime
 
 app = FastAPI(title="craft_cost API")
 
@@ -52,6 +54,11 @@ SESSION_MAX_AGE = int(os.getenv("SESSION_MAX_AGE", "604800"))  # 7 days
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 MINT_TOKEN_SECRET = os.getenv("MINT_TOKEN_SECRET", "dev_mint_secret")
 USE_LOCAL_DB = str(os.getenv("USE_LOCAL_DB", "false")).lower() in {"1", "true", "yes"}
+
+# Stripe configuration
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
 
 ADMIN_EMAILS = {e.strip().lower() for e in (os.getenv("ADMIN_EMAILS", "").split(",") if os.getenv("ADMIN_EMAILS") else [])}
 
@@ -493,6 +500,38 @@ async def auth_me(authorization: str | None = Header(default=None), db: Session 
 def _queue() -> Queue:
     return Queue("default", connection=redis.from_url(_redis_url))
 
+def _redis() -> redis.Redis:
+    return redis.from_url(_redis_url)
+
+
+def _stripe_ensure_price(period: str) -> str:
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail={"code": "stripe_not_configured", "message": "STRIPE_SECRET_KEY missing"})
+    r = _redis()
+    price_key = f"stripe:price:{period}"
+    existing = r.get(price_key)
+    if existing:
+        try:
+            return existing.decode("utf-8") if isinstance(existing, (bytes, bytearray)) else str(existing)
+        except Exception:
+            return str(existing)
+    # Ensure product
+    pkey = "stripe:product:plus"
+    prod_id_raw = r.get(pkey)
+    if prod_id_raw:
+        try:
+            product_id = prod_id_raw.decode("utf-8") if isinstance(prod_id_raw, (bytes, bytearray)) else str(prod_id_raw)
+        except Exception:
+            product_id = str(prod_id_raw)
+    else:
+        product = stripe.Product.create(name="Plus Plan", description="Plus subscription plan")
+        product_id = product.id
+        r.set(pkey, product_id)
+    interval = "month" if period == "monthly" else "year"
+    price = stripe.Price.create(product=product_id, unit_amount=100, currency="usd", recurring={"interval": interval})
+    r.set(price_key, price.id)
+    return price.id
+
 
 # Week 2: enqueue CSV ingestion job (no DB writes yet)
 @app.post("/v1/transactions/csv")
@@ -717,6 +756,108 @@ async def get_suggestions(authorization: str | None = Header(default=None), db: 
     user, _plan = _get_auth_user(authorization, db)
     items = generate_suggestions(db, user_id=(user["id"] if user else None))
     return {"items": items}
+
+
+class ManualSubPayload(BaseModel):
+    title: str
+    amount: Optional[float] = None
+    cadence: Optional[str] = "monthly"
+
+
+@app.get("/v1/subscriptions")
+async def list_subscriptions(authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"])
+    sugs = generate_suggestions(db, user_id=uid)
+    derived = [s for s in sugs if ("subscriptions" in (s.get("tags") or []) or str(s.get("id") or "").startswith("sub:") or str(s.get("id") or "").startswith("streaming:"))]
+    r = _redis()
+    manual_raw = r.get(f"subs:{uid}")
+    manual = json.loads(manual_raw) if manual_raw else []
+    return {"items": manual + derived}
+
+
+@app.post("/v1/subscriptions/manual")
+async def add_manual_subscription(payload: ManualSubPayload, authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, _ = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"])
+    r = _redis()
+    key = f"subs:{uid}"
+    raw = r.get(key)
+    arr = json.loads(raw) if raw else []
+    item = {
+        "id": f"manual:{uuid.uuid4().hex}",
+        "title": payload.title,
+        "summary": f"${payload.amount}/{payload.cadence}" if payload.amount else payload.cadence,
+        "estimated_monthly_saving": 0,
+        "tags": ["subscriptions", "manual"],
+        "evidence": [],
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    arr.insert(0, item)
+    r.set(key, json.dumps(arr))
+    return {"ok": True, "item": item}
+
+
+@app.delete("/v1/subscriptions/manual/{item_id}")
+async def delete_manual_subscription(item_id: str, authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, _ = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"])
+    if not item_id or not item_id.startswith("manual:"):
+        raise HTTPException(status_code=400, detail={"code": "bad_request", "message": "Invalid manual subscription id"})
+    r = _redis()
+    key = f"subs:{uid}"
+    raw = r.get(key)
+    arr = json.loads(raw) if raw else []
+    new_arr = [x for x in arr if str(x.get("id")) != item_id]
+    if len(new_arr) == len(arr):
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Item not found"})
+    r.set(key, json.dumps(new_arr))
+    return {"ok": True, "deleted": True, "id": item_id}
+
+
+class NegotiationPayload(BaseModel):
+    merchant: str
+    account: Optional[str] = None
+
+
+@app.get("/v1/negotiations")
+async def list_negotiations(authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, _ = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"])
+    r = _redis()
+    raw = r.get(f"neg:{uid}")
+    arr = json.loads(raw) if raw else []
+    return {"items": arr}
+
+
+@app.post("/v1/negotiations")
+async def create_negotiation(payload: NegotiationPayload, authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, _ = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"])
+    r = _redis()
+    key = f"neg:{uid}"
+    raw = r.get(key)
+    arr = json.loads(raw) if raw else []
+    item = {
+        "id": f"n:{uuid.uuid4().hex}",
+        "merchant": payload.merchant,
+        "account": payload.account,
+        "status": "draft",
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    arr.insert(0, item)
+    r.set(key, json.dumps(arr))
+    return {"ok": True, "item": item}
 
 
 class DebtItem(BaseModel):
@@ -1018,6 +1159,140 @@ async def debt_export(payload: DebtExportRequest, request: Request, db: Session 
 
     return {"ok": True}
 
+
+# Billing: upgrade current authenticated user to plus
+class BillingUpgradePayload(BaseModel):
+    plan: Literal["plus"] = "plus"
+
+
+@app.post("/v1/billing/upgrade")
+async def billing_upgrade(payload: BillingUpgradePayload, authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"])
+    row = db.execute(select(Billing).where(Billing.user_id == uid)).scalar_one_or_none()
+    if row:
+        db.execute(text("UPDATE billing SET plan = CAST(:plan AS plan) WHERE user_id = :uid"), {"plan": payload.plan, "uid": uid})
+    else:
+        db.execute(text("INSERT INTO billing (user_id, plan) VALUES (:uid, CAST(:plan AS plan))"), {"uid": uid, "plan": payload.plan})
+    db.commit()
+    return {"ok": True, "plan": payload.plan}
+
+
+@app.get("/v1/billing/status")
+async def billing_status(authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    return {"plan": plan}
+
+
+class StripeCheckoutPayload(BaseModel):
+    period: Literal["monthly", "annual"] = "monthly"
+
+
+@app.post("/v1/billing/stripe/checkout")
+async def stripe_checkout(payload: StripeCheckoutPayload, authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail={"code": "stripe_not_configured", "message": "STRIPE_SECRET_KEY missing"})
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"])
+    price_monthly = os.getenv("STRIPE_PRICE_ID_MONTHLY")
+    price_annual = os.getenv("STRIPE_PRICE_ID_ANNUAL")
+    price_id = price_monthly if payload.period == "monthly" else price_annual
+    if not price_id:
+        # Auto-create $1.00 price and cache in Redis
+        price_id = _stripe_ensure_price(payload.period)
+    web_base = os.getenv("WEB_BASE_URL", "http://localhost:3001")
+    try:
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url=f"{web_base}/dashboard?checkout=success&session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{web_base}/?checkout=canceled",
+            client_reference_id=str(uid),
+            customer_email=(user.get("email") or None),
+            metadata={"user_id": str(uid), "period": payload.period},
+            allow_promotion_codes=True,
+        )
+        return {"id": session.get("id"), "url": session.get("url")}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"code": "stripe_error", "message": str(e)})
+
+
+@app.post("/v1/billing/stripe/portal")
+async def stripe_portal(authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail={"code": "stripe_not_configured", "message": "STRIPE_SECRET_KEY missing"})
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"])
+    r = _redis()
+    cust_raw = r.get(f"stripe:customer:{uid}")
+    customer_id = (
+        cust_raw.decode("utf-8") if isinstance(cust_raw, (bytes, bytearray)) else (str(cust_raw) if cust_raw else None)
+    )
+    try:
+        if not customer_id and user.get("email"):
+            res = stripe.Customer.list(email=user["email"], limit=1)
+            if res and getattr(res, "data", None):
+                customer_id = res.data[0].id
+                r.set(f"stripe:customer:{uid}", customer_id)
+        if not customer_id:
+            c = stripe.Customer.create(email=user.get("email") or None, metadata={"user_id": str(uid)})
+            customer_id = c.id
+            r.set(f"stripe:customer:{uid}", customer_id)
+        web_base = os.getenv("WEB_BASE_URL", "http://localhost:3001")
+        ps = stripe.billing_portal.Session.create(customer=customer_id, return_url=f"{web_base}/dashboard")
+        return {"url": ps.get("url") or getattr(ps, "url", None)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"code": "stripe_error", "message": str(e)})
+
+
+# Paddle webhook (dev-friendly placeholder). In production, verify using Paddle's signature scheme.
+@app.post("/v1/billing/webhook/paddle")
+async def paddle_webhook(request: Request, db: Session = Depends(get_session)):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": {"code": "invalid_json", "message": "Invalid payload"}})
+    secret = os.getenv("PADDLE_WEBHOOK_SECRET")
+    if secret:
+        supplied = request.headers.get("X-Webhook-Secret") or request.headers.get("X-Paddle-Webhook-Secret")
+        if not supplied or supplied != secret:
+            return JSONResponse(status_code=401, content={"error": {"code": "unauthorized", "message": "Invalid webhook secret"}})
+    event_type = str(body.get("event_type") or body.get("eventName") or "").lower()
+    email = None
+    # Try Paddle v2 structure
+    try:
+        email = (
+            body.get("data", {}).get("customer", {}).get("email")
+            or body.get("data", {}).get("user", {}).get("email")
+        )
+    except Exception:
+        email = None
+    if event_type in {"transaction.completed", "subscription.activated"} and email:
+        row = db.execute(select(Users).where(Users.email == email)).scalar_one_or_none()
+        if row:
+            uid = int(row.id)
+            exists = db.execute(select(Billing).where(Billing.user_id == uid)).scalar_one_or_none()
+            if exists:
+                db.execute(text("UPDATE billing SET plan = CAST('plus' AS plan) WHERE user_id = :uid"), {"uid": uid})
+            else:
+                db.execute(text("INSERT INTO billing (user_id, plan) VALUES (:uid, CAST('plus' AS plan))"), {"uid": uid})
+            db.commit()
+            try:
+                db.execute(text("INSERT INTO audit_events (user_id, actor, action, payload_json) VALUES (:uid, 'system', :act, :payload)"),
+                           {"uid": uid, "act": "paddle_webhook", "payload": json.dumps({"event": event_type})})
+                db.commit()
+            except Exception:
+                pass
+    return {"ok": True}
+
 class FlagPayload(BaseModel):
     key: str
     value: bool
@@ -1114,20 +1389,68 @@ async def recategorize_transaction(tx_id: int, payload: RecategorizePayload, aut
     }
 
 
-# Webhook scaffolds (Stripe/Plaid)
 @app.post("/v1/webhooks/stripe")
-async def webhook_stripe(request: Request):
-    secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+async def webhook_stripe(request: Request, db: Session = Depends(get_session)):
     payload = await request.body()
-    sig = request.headers.get("Stripe-Signature")
-    if secret and sig:
+    sig_header = request.headers.get("Stripe-Signature")
+    secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+    event = None
+    if secret:
         try:
-            mac = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-            if mac not in sig:
-                return JSONResponse(status_code=400, content={"error": {"code": "invalid_signature", "message": "Signature mismatch"}})
+            event = stripe.Webhook.construct_event(payload=payload, sig_header=sig_header, secret=secret)
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": {"code": "invalid_signature", "message": str(e)}})
+    else:
+        # Dev: parse without verification
+        try:
+            event = json.loads(payload)
         except Exception:
-            return JSONResponse(status_code=400, content={"error": {"code": "invalid_request", "message": "Unable to verify"}})
-    # Accept in dev even without secret
+            return JSONResponse(status_code=400, content={"error": {"code": "invalid_json", "message": "Invalid payload"}})
+
+    et = (event.get("type") if isinstance(event, dict) else getattr(event, "type", "")) or ""
+    data = (event.get("data", {}).get("object") if isinstance(event, dict) else getattr(event, "data", {}).get("object")) or {}
+    if et == "checkout.session.completed":
+        uid = (
+            (data.get("metadata", {}) or {}).get("user_id")
+            or data.get("client_reference_id")
+        )
+        email = (data.get("customer_details") or {}).get("email")
+        customer_id = data.get("customer")
+        try:
+            if uid:
+                uid = int(uid)
+                exists = db.execute(select(Billing).where(Billing.user_id == uid)).scalar_one_or_none()
+                if exists:
+                    db.execute(text("UPDATE billing SET plan = CAST('plus' AS plan) WHERE user_id = :uid"), {"uid": uid})
+                else:
+                    db.execute(text("INSERT INTO billing (user_id, plan) VALUES (:uid, CAST('plus' AS plan))"), {"uid": uid})
+                db.commit()
+                # Cache Stripe customer mapping
+                try:
+                    if customer_id:
+                        r = _redis()
+                        r.set(f"stripe:customer:{uid}", str(customer_id))
+                except Exception:
+                    pass
+            elif email:
+                row = db.execute(select(Users).where(Users.email == email)).scalar_one_or_none()
+                if row:
+                    uid2 = int(row.id)
+                    exists = db.execute(select(Billing).where(Billing.user_id == uid2)).scalar_one_or_none()
+                    if exists:
+                        db.execute(text("UPDATE billing SET plan = CAST('plus' AS plan) WHERE user_id = :uid"), {"uid": uid2})
+                    else:
+                        db.execute(text("INSERT INTO billing (user_id, plan) VALUES (:uid, CAST('plus' AS plan))"), {"uid": uid2})
+                    db.commit()
+                    # Cache Stripe customer mapping
+                    try:
+                        if customer_id:
+                            r = _redis()
+                            r.set(f"stripe:customer:{uid2}", str(customer_id))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
     return {"ok": True}
 
 

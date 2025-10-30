@@ -133,7 +133,8 @@ app.post('/render', (req, res) => {
     doc.pipe(res);
     // Footer on each page (simple, avoid line wraps)
     const drawFooter = () => {
-      const footerY = doc.page.height - 30;
+      const bottomY = doc.page.height - (doc.page.margins.bottom || 50);
+      const footerY = bottomY - 20;
       const leftX = doc.page.margins.left;
       const rightW = doc.page.width - doc.page.margins.left - doc.page.margins.right;
       const t = String(title || 'Debt Payoff Plan');

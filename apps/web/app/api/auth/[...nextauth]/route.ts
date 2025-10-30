@@ -1,6 +1,8 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import EmailProvider from "next-auth/providers/email";
+import GoogleProvider from "next-auth/providers/google";
+import GitHubProvider from "next-auth/providers/github";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import prisma from "../../../../lib/prisma";
 
@@ -24,6 +26,16 @@ const handler = NextAuth({
       },
       from: process.env.EMAIL_FROM || "noreply@craft_cost.local",
       maxAge: 60 * 60, // 1h magic link
+    }),
+    GoogleProvider({
+      clientId: String(process.env.GOOGLE_CLIENT_ID || ""),
+      clientSecret: String(process.env.GOOGLE_CLIENT_SECRET || ""),
+      allowDangerousEmailAccountLinking: true,
+    }),
+    GitHubProvider({
+      clientId: String(process.env.GITHUB_CLIENT_ID || ""),
+      clientSecret: String(process.env.GITHUB_CLIENT_SECRET || ""),
+      allowDangerousEmailAccountLinking: true,
     }),
     Credentials({
       name: "Credentials",
@@ -115,6 +127,7 @@ const handler = NextAuth({
       if (session.user) {
         (session.user as any).role = (token as any).role;
         (session.user as any).plan = (token as any).plan;
+        (session.user as any).id = (token as any).sub;
       }
       return session;
     },

@@ -12,11 +12,14 @@
     "debt-expense-advisor": "file:../..",
     "next": "14.2.33",
     "@prisma/client": "^5.19.1",
+    "framer-motion": "^11.0.0",
+    "nodemailer": "^7.0.7",
+    "@stripe/stripe-js": "^3.4.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-hot-toast": "^2.4.0",
     "recharts": "^2.12.7",
-    "next-auth": "^4.24.7",
+    "next-auth": "4.24.7",
     "@next-auth/prisma-adapter": "^1.0.7"
   },
   "devDependencies": {

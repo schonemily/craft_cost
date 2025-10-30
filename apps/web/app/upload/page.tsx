@@ -16,6 +16,8 @@ export default function UploadPage() {
   const [flagsLoaded, setFlagsLoaded] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
+  const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
+  const fileRef = React.useRef<HTMLInputElement | null>(null);
 
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010";
 
@@ -26,8 +28,7 @@ export default function UploadPage() {
     setError(null);
     setJobId(null);
     setStatus(null);
-    const form = e.currentTarget;
-    const input = form.querySelector<HTMLInputElement>("input[type=file]");
+    const input = fileRef.current;
     if (!input || !input.files || input.files.length === 0) {
       setError("Please choose a CSV file");
       return;
@@ -55,7 +56,19 @@ export default function UploadPage() {
       setUploading(false);
     }
   }
-
+  
+  function clearFile() {
+    if (fileRef.current) fileRef.current.value = "";
+    setSelectedFile(null);
+    setError(null);
+    setJobId(null);
+    setStatus(null);
+    if (pollRef.current) window.clearInterval(pollRef.current);
+    pollRef.current = null;
+    setPolling(false);
+    toast.success("File cleared successfully.");
+  }
+  
   // Auto-poll when a job is created
   React.useEffect(() => {
     if (!jobId) return;
@@ -123,9 +136,18 @@ export default function UploadPage() {
           type="file"
           name="file"
           accept=".csv,text/csv"
+          ref={fileRef}
+          onChange={(e) => {
+            const f = e.currentTarget.files && e.currentTarget.files[0] ? e.currentTarget.files[0] : null;
+            setSelectedFile(f);
+            if (error) setError(null);
+          }}
         />
-        <Button type="submit" disabled={uploading}>
+        <Button type="submit" disabled={uploading || !selectedFile}>
           {uploading ? "Uploading…" : "Upload"}
+        </Button>
+        <Button type="button" variant="ghost" className="ml-2" onClick={clearFile} disabled={uploading}>
+          Clear File
         </Button>
       </form>
       )}

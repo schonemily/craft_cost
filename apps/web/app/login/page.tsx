@@ -1,5 +1,3 @@
-import { redirect } from "next/navigation";
-
-export default function LoginAliasPage() {
-  redirect("/signin");
-}
+"use client";
+import SignInPage from "../signin/page";
+export default SignInPage;

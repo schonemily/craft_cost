@@ -65,6 +65,12 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev_jwt_secret}
       SESSION_MAX_AGE: ${SESSION_MAX_AGE:-604800}
       MINT_TOKEN_SECRET: ${MINT_TOKEN_SECRET:-dev_mint_secret}
+      # Stripe
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_ID_MONTHLY: ${STRIPE_PRICE_ID_MONTHLY:-}
+      STRIPE_PRICE_ID_ANNUAL: ${STRIPE_PRICE_ID_ANNUAL:-}
+      WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3001}
     depends_on:
       db:
         condition: service_healthy
@@ -97,8 +103,6 @@ services:
       dockerfile: apps/web/Dockerfile
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8010
-      NEXTAUTH_URL: http://localhost:3001
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-dev_nextauth_secret}
       API_INTERNAL_URL: http://api:8000
       MINT_TOKEN_SECRET: ${MINT_TOKEN_SECRET:-dev_mint_secret}
       DATABASE_URL: postgresql://postgres:postgres@db:5432/app?schema=nextauth
@@ -110,6 +114,15 @@ services:
       SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
       EMAIL_FROM: ${MAIL_FROM:-noreply@craft_cost.local}
       NODE_ENV: production
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-dev_nextauth_secret}
+      # Stripe
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}
+      # OAuth (NextAuth providers)
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
     depends_on:
       api:
         condition: service_started
