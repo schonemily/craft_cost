@@ -5,6 +5,9 @@ from typing import Any, Dict, List, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 from .models import Transactions, TransactionsRaw
+import httpx
+import re
+import hashlib
 
 @dataclass
 class Suggestion:
@@ -20,6 +23,57 @@ class Suggestion:
 STREAMING_MERCHANTS = {
     "netflix", "hulu", "disney", "prime video", "hbomax", "max", "spotify", "apple tv", "youtube premium",
 }
+
+def _stable_index(key: str, n: int) -> int:
+    h = hashlib.sha1(key.encode("utf-8")).hexdigest()
+    return int(h[:8], 16) % max(1, n)
+
+def _try_fetch_prices(urls: List[str]) -> Tuple[float | None, List[str]]:
+    found: List[float] = []
+    ok_links: List[str] = []
+    for u in urls:
+        try:
+            r = httpx.get(u, timeout=2.0)
+            if r.status_code >= 200 and r.status_code < 300 and r.text:
+                ok_links.append(u)
+                m = re.findall(r"\$\s*(\d{1,3}(?:\.\d{1,2})?)\s*/?\s*(?:mo|month)?", r.text, re.I)
+                vals = [float(x) for x in m if x]
+                if vals:
+                    found.append(sorted(vals)[0])
+        except Exception:
+            continue
+    if found:
+        vals = sorted(found)
+        mid = vals[len(vals)//2]
+        return mid, ok_links
+    return None, ok_links
+
+def _online_benchmarks(category: str, merchant: str | None = None) -> Tuple[float | None, List[str]]:
+    urls: List[str] = []
+    cat = (category or "").lower()
+    m = (merchant or "").lower()
+    if cat == "telco":
+        urls = [
+            "https://www.spectrum.com/internet/plans",
+            "https://www.xfinity.com/learn/internet-service",
+            "https://www.att.com/internet/",
+        ]
+    elif cat == "subscriptions" or any(x in m for x in ("netflix","hulu","disney","spotify","apple tv","youtube")):
+        urls = [
+            "https://www.netflix.com/signup/planform",
+            "https://www.spotify.com/us/premium/",
+            "https://www.hulu.com/welcome",
+            "https://www.disneyplus.com/subscribe",
+        ]
+    if not urls:
+        return None, []
+    price, links = _try_fetch_prices(urls)
+    if price is None:
+        if cat == "telco":
+            return 60.0, urls
+        if cat == "subscriptions":
+            return 12.0, urls
+    return price, links
 
 def _text_blob(r: Tuple) -> str:
     """Lowercased combined merchant/description for keyword heuristics."""
@@ -103,10 +157,24 @@ def suggest_recurring_subscriptions(rows: List[Tuple]) -> List[Suggestion]:
             amt = _avg_abs_amount(items)
             if amt <= 0:
                 continue
+            bench, links = _online_benchmarks("subscriptions", merchant)
+            templates = [
+                "You spend about ${amt:.2f}/mo on {merchant}. Consider canceling or downgrading.",
+                "Recurring charge to {merchant} is ~${amt:.2f}/mo. Review plan options and usage.",
+                "{merchant} costs ~${amt:.2f}/mo. If value is low, pause or switch to a lower tier.",
+            ]
+            if bench is not None:
+                templates = [
+                    "You pay ~${amt:.2f}/mo to {merchant}. Comparable plans are ~${bench:.2f}/mo.",
+                    "{merchant} runs ~${amt:.2f}/mo; typical pricing is ~${bench:.2f}/mo per sources.",
+                    "{merchant} averages ~${amt:.2f}/mo for you; benchmarks suggest ~${bench:.2f}/mo.",
+                ]
+            idx = _stable_index(merchant, len(templates))
+            summary = templates[idx].format(amt=amt, merchant=merchant, bench=(bench or 0))
             s = Suggestion(
                 id=f"sub:{merchant}",
-                title=f"Cancel or downgrade {merchant}",
-                summary=f"You appear to pay about ${amt:.2f}/mo to {merchant}.",
+                title=f"Review {merchant} subscription",
+                summary=summary,
                 estimated_monthly_saving=amt,
                 estimated_annual_saving=amt * 12,
                 confidence=0.8,
@@ -121,6 +189,7 @@ def suggest_recurring_subscriptions(rows: List[Tuple]) -> List[Suggestion]:
                         }
                         for it in sorted(items, key=lambda x: x.date or date.today())[-3:]
                     ],
+                    "reference_links": links,
                 }],
             )
             out.append(s)
@@ -137,15 +206,23 @@ def suggest_streaming_consolidation(rows: List[Tuple]) -> List[Suggestion]:
     if len(active) >= 2:
         total = sum(a for _, a, __ in active)
         save = total * 0.3
+        templates = [
+            "Multiple streaming services detected; trimming could save ~${save:.2f}/mo.",
+            "Overlapping streaming subscriptions found; pausing extras could free ~${save:.2f}/mo.",
+            "Streamline streaming: reducing overlap may save about ${save:.2f}/mo.",
+        ]
+        idx = _stable_index("streaming", len(templates))
+        summary = templates[idx].format(save=save)
+        bench, links = _online_benchmarks("subscriptions", None)
         s = Suggestion(
             id="streaming:consolidate",
             title="Consolidate streaming services",
-            summary=f"Multiple streaming subscriptions detected. Consider canceling extras to save about ${save:.2f}/mo.",
+            summary=summary,
             estimated_monthly_saving=save,
             estimated_annual_saving=save * 12,
             confidence=0.7,
             tags=["subscriptions", "streaming"],
-            evidence=[{"merchant": m, "amount": a} for m, a, __ in active],
+            evidence=[{"merchant": m, "amount": a} for m, a, __ in active] + ([{"reference_links": links}] if links else []),
         )
         out.append(s)
     return out
@@ -185,15 +262,34 @@ def suggest_negotiate_utilities(rows: List[Tuple]) -> List[Suggestion]:
             })
             if len(samples) >= 3:
                 break
+        tpls_no_bench = [
+            "Your {cat} average is ~${amt:.2f}/mo; negotiating could save ~${save:.2f}/mo.",
+            "You pay about ${amt:.2f}/mo for {cat}. Target a ~15% cut (~${save:.2f}/mo).",
+            "{cat.capitalize()} spend is ~${amt:.2f}/mo. Shop or negotiate to save ~${save:.2f}/mo.",
+        ]
+        tpls_with_bench = [
+            "You pay ~${amt:.2f}/mo for {cat}; comparable plans are ~${bench:.2f}/mo.",
+            "{cat.capitalize()} runs ~${amt:.2f}/mo; typical offers are near ${bench:.2f}/mo.",
+            "Market rates for {cat} average ~${bench:.2f}/mo; yours is ~${amt:.2f}/mo.",
+        ]
+        bench = None
+        links: List[str] = []
+        if cat == "telco":
+            b, lks = _online_benchmarks("telco")
+            bench = b
+            links = lks
+        idx = _stable_index(cat, len(tpls_with_bench if bench is not None else tpls_no_bench))
+        chosen = (tpls_with_bench if bench is not None else tpls_no_bench)[idx]
+        summary = chosen.format(cat=cat, amt=amt, save=save, bench=(bench or 0))
         s = Suggestion(
             id=f"negotiate:{cat}",
             title=f"Negotiate {cat}",
-            summary=f"Try negotiating your {cat} bill for ~15% savings (~${save:.2f}/mo).",
+            summary=summary,
             estimated_monthly_saving=save,
             estimated_annual_saving=save * 12,
             confidence=0.6,
             tags=[cat, "negotiation"],
-            evidence=[{"samples": samples}],
+            evidence=[{"samples": samples}] + ([{"reference_links": links}] if links else []),
         )
         out.append(s)
     return out
@@ -206,10 +302,17 @@ def suggest_reduce_dining(rows: List[Tuple]) -> List[Suggestion]:
     if total < 300:
         return []
     save = total * 0.15
+    tpls = [
+        "Dining totals ~${total:.2f} recently; trimming ~15% saves ~${save:.2f}/mo.",
+        "Recent dining is ~${total:.2f}. Set a goal to cut ~15% (~${save:.2f}/mo).",
+        "Eating out cost ~${total:.2f} in the period; a modest 15% trim saves ~${save:.2f}/mo.",
+    ]
+    idx = _stable_index("dining", len(tpls))
+    summary = tpls[idx].format(total=total, save=save)
     return [Suggestion(
         id="dining:reduce",
         title="Reduce dining spend",
-        summary=f"Dining spend in the recent period is ~${total:.2f}. Aim to reduce by ~15% (~${save:.2f}/mo).",
+        summary=summary,
         estimated_monthly_saving=save,
         estimated_annual_saving=save * 12,
         confidence=0.5,

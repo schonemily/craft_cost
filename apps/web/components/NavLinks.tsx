@@ -20,7 +20,6 @@ export default function NavLinks() {
           <Link href="/subscriptions" className={`px-2 py-1 rounded-md ${pathname.startsWith("/subscriptions") ? "bg-white/5 text-white" : "hover:text-white"}`}>Subscriptions</Link>
           <Link href="/negotiations" className={`px-2 py-1 rounded-md ${pathname.startsWith("/negotiations") ? "bg-white/5 text-white" : "hover:text-white"}`}>Negotiations</Link>
           <Link href="/intake" className={`px-2 py-1 rounded-md ${pathname.startsWith("/intake") && !pathname.startsWith("/intake-preview") ? "bg-white/5 text-white" : "hover:text-white"}`}>Intake</Link>
-          <Link href="/intake-preview" className={`px-2 py-1 rounded-md ${pathname.startsWith("/intake-preview") ? "bg-white/5 text-white" : "hover:text-white"}`}>Intake Preview</Link>
           <Link href="/spend" className={`px-2 py-1 rounded-md ${pathname.startsWith("/spend") ? "bg-white/5 text-white" : "hover:text-white"}`}>Spend</Link>
           <Link href="/suggestions" className={`px-2 py-1 rounded-md ${pathname.startsWith("/suggestions") ? "bg-white/5 text-white" : "hover:text-white"}`}>Suggestions</Link>
           <Link href="/debt" className={`px-2 py-1 rounded-md ${pathname.startsWith("/debt") ? "bg-white/5 text-white" : "hover:text-white"}`}>Debt</Link>

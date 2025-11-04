@@ -21,6 +21,10 @@ export default function SuggestionsPage() {
 
   const renderEvidence = React.useCallback((evidence: any[]) => {
     if (!Array.isArray(evidence) || evidence.length === 0) return null
+    const linkSets = evidence
+      .map((e: any) => Array.isArray(e?.reference_links) ? e.reference_links : [])
+      .filter((arr: any) => Array.isArray(arr) && arr.length) as string[][]
+    const links = Array.from(new Set((linkSets.flat() as string[]).filter(Boolean)))
     // Case 1: objects with samples: [{ samples: [{date, amount, description, merchant}, ...] }]
     const hasSampleObjects = evidence.some((e: any) => Array.isArray(e?.samples) && e.samples.length && (e.samples[0].date != null || e.samples[0].description != null || e.samples[0].merchant != null))
     if (hasSampleObjects) {
@@ -72,7 +76,20 @@ export default function SuggestionsPage() {
         </ul>
       )
     }
-    // Fallback to JSON
+    if (links.length) {
+      return (
+        <div className="mt-2 text-xs text-[var(--muted)]">
+          <div className="mb-1 text-white/80">Reference links</div>
+          <ul className="list-disc ml-4 space-y-1">
+            {links.map((u) => (
+              <li key={u}>
+                <a href={u} target="_blank" rel="noreferrer" className="underline hover:text-white">{u}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )
+    }
     return <pre className="mt-2 overflow-auto rounded bg-black/30 p-2 text-xs text-white/80">{JSON.stringify(evidence, null, 2)}</pre>
   }, [])
 

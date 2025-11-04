@@ -41,6 +41,22 @@ export default function SpendPage() {
     enabled,
   })
 
+  const clearMutation = useMutation({
+    mutationFn: async () => {
+      const headers: Record<string, string> = {}
+      if (apiToken) headers['Authorization'] = `Bearer ${apiToken}`
+      const r = await fetch(`${apiBase}/v1/transactions`, { method: 'DELETE', headers })
+      if (!r.ok) throw new Error(`delete ${r.status}`)
+      return r.json() as Promise<{ ok: boolean; deleted: number }>
+    },
+    onSuccess: (d: any) => {
+      toast.success(`Cleared ${Number(d?.deleted ?? 0)} transactions`)
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['summary'] })
+    },
+    onError: () => toast.error('Failed to clear'),
+  })
+
   const txQuery = useInfiniteQuery<{ items: Tx[]; next_cursor: number | null }>({
     queryKey: ['transactions', { category, period }],
     queryFn: async ({ pageParam }) => {
@@ -227,11 +243,24 @@ export default function SpendPage() {
               <option value="other">other</option>
             </select>
           </div>
-          {nextCursor && (
-            <Button onClick={() => txQuery.fetchNextPage()} disabled={txQuery.isFetchingNextPage} variant="ghost">
-              {txQuery.isFetchingNextPage ? 'Loading...' : 'Load more'}
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={() => {
+                if (clearMutation.isPending) return
+                if (!window.confirm('This will delete all uploaded transactions for your account. Continue?')) return
+                clearMutation.mutate()
+              }}
+              variant="ghost"
+              disabled={clearMutation.isPending}
+            >
+              {clearMutation.isPending ? 'Clearing…' : 'Clear all'}
             </Button>
-          )}
+            {nextCursor && (
+              <Button onClick={() => txQuery.fetchNextPage()} disabled={txQuery.isFetchingNextPage} variant="ghost">
+                {txQuery.isFetchingNextPage ? 'Loading...' : 'Load more'}
+              </Button>
+            )}
+          </div>
         </div>
       </section>
     </div>

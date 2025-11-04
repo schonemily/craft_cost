@@ -169,9 +169,18 @@ def ingest_csv(data: bytes, user_id: int | None = None, user_email: str | None =
                 desc = (rec.get("description") or rec.get("Description") or rec.get("Narration") or "").strip() or None
                 merchant_raw = (rec.get("merchant") or rec.get("Merchant") or rec.get("merchant_raw") or rec.get("Payee") or "").strip() or None
 
+                rhash = _row_hash(uid, date_obj.isoformat() if date_obj else None, amount, desc, merchant_raw)
+                existing = conn.execute(text("""
+                    SELECT id FROM transactions_raw
+                    WHERE user_id = :user_id AND row_hash = :row_hash
+                    LIMIT 1
+                """), {"user_id": uid, "row_hash": rhash}).fetchone()
+                if existing:
+                    continue
+
                 tx_raw_id = conn.execute(text("""
-                    INSERT INTO transactions_raw (user_id, account_id, plaid_tx_id, date, amount, iso_currency, description, merchant_raw, meta_json)
-                    VALUES (:user_id, NULL, NULL, :date, :amount, NULL, :description, :merchant_raw, NULL)
+                    INSERT INTO transactions_raw (user_id, account_id, plaid_tx_id, date, amount, iso_currency, description, merchant_raw, meta_json, row_hash)
+                    VALUES (:user_id, NULL, NULL, :date, :amount, NULL, :description, :merchant_raw, NULL, :row_hash)
                     RETURNING id
                 """), {
                     "user_id": uid,
@@ -179,6 +188,7 @@ def ingest_csv(data: bytes, user_id: int | None = None, user_email: str | None =
                     "amount": amount,
                     "description": desc,
                     "merchant_raw": merchant_raw,
+                    "row_hash": rhash,
                 }).fetchone()[0]
 
                 cat = _guess_category(desc, merchant_raw)

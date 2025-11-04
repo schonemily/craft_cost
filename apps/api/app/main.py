@@ -6,6 +6,9 @@ import hmac
 import hashlib
 import logging
 import redis
+import csv
+import io
+import re
 from rq import Queue
 from rq.job import Job
 from fastapi import FastAPI, UploadFile, File, HTTPException, status, Depends, Query, Request, Header
@@ -28,6 +31,8 @@ import random
 import jwt
 from .suggestions_engine import generate_suggestions
 from datetime import datetime
+from openpyxl import load_workbook
+from PyPDF2 import PdfReader
 
 app = FastAPI(title="craft_cost API")
 
@@ -59,6 +64,7 @@ USE_LOCAL_DB = str(os.getenv("USE_LOCAL_DB", "false")).lower() in {"1", "true", 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 ADMIN_EMAILS = {e.strip().lower() for e in (os.getenv("ADMIN_EMAILS", "").split(",") if os.getenv("ADMIN_EMAILS") else [])}
 
@@ -504,6 +510,149 @@ def _redis() -> redis.Redis:
     return redis.from_url(_redis_url)
 
 
+# Stripe helper: per-user customer caching
+def _stripe_customer_for(uid: int, email: str) -> str:
+    r = _redis()
+    key = f"stripe:cust:{uid}"
+    existing = r.get(key)
+    if existing:
+        try:
+            return existing.decode("utf-8") if isinstance(existing, (bytes, bytearray)) else str(existing)
+        except Exception:
+            return str(existing)
+    cust = stripe.Customer.create(email=email)
+    r.set(key, cust.id)
+    return cust.id
+
+
+class FinConnSavePayload(BaseModel):
+    session_id: Optional[str] = None
+    account_ids: Optional[List[str]] = None
+
+
+@app.post("/v1/finconn/session")
+async def finconn_create_session(authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail={"code": "stripe_not_configured", "message": "STRIPE_SECRET_KEY missing"})
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"])
+    email = str(user.get("email") or "")
+    customer_id = _stripe_customer_for(uid, email)
+    try:
+        session = stripe.financial_connections.Session.create(
+            account_holder={"type": "customer", "customer": customer_id},
+            permissions=["balances", "ownership", "transactions"],
+            filters={"countries": ["US"]},
+            prefetched_data={"balances": True},
+        )
+        return {"id": session.id, "client_secret": session.client_secret}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"code": "fc_session_failed", "message": str(e)})
+
+
+@app.post("/v1/finconn/accounts")
+async def finconn_save_accounts(payload: FinConnSavePayload, authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail={"code": "stripe_not_configured", "message": "STRIPE_SECRET_KEY missing"})
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"]) 
+    r = _redis()
+    items = []
+    ids: List[str] = list(payload.account_ids or [])
+    # If session_id provided, resolve to account ids server-side
+    if payload.session_id:
+        try:
+            sess = stripe.financial_connections.Session.retrieve(payload.session_id)
+            sess_accounts = []
+            # Handle both list and {data:[...]}
+            try:
+                sess_accounts = [getattr(a, "id", None) or (a.get("id") if isinstance(a, dict) else None) for a in (getattr(sess, "accounts", []) or [])]
+            except Exception:
+                data = getattr(getattr(sess, "accounts", {}), "data", []) or []
+                sess_accounts = [getattr(a, "id", None) or (a.get("id") if isinstance(a, dict) else None) for a in data]
+            ids.extend([x for x in sess_accounts if x])
+        except Exception:
+            pass
+    # de-dup ids
+    seen = set()
+    uniq_ids = []
+    for x in ids:
+        if x and x not in seen:
+            seen.add(x)
+            uniq_ids.append(x)
+    for acc_id in uniq_ids:
+        try:
+            acc = stripe.financial_connections.Account.retrieve(acc_id)
+            info = {
+                "id": acc.id,
+                "display_name": getattr(acc, "display_name", None),
+                "institution_name": getattr(acc, "institution_name", None),
+                "last4": getattr(acc, "last4", None),
+                "category": getattr(acc, "category", None),
+                "subcategory": getattr(acc, "subcategory", None),
+            }
+            items.append(info)
+            # map acc->user for webhook cleanup
+            r.set(f"fc:acct:{acc.id}", str(uid))
+        except Exception:
+            continue
+    key = f"fc:accounts:{uid}"
+    r.set(key, json.dumps(items))
+    return {"items": items}
+
+
+@app.get("/v1/finconn/accounts")
+async def finconn_list_accounts(authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    uid = int(user["id"]) 
+    r = _redis()
+    raw = r.get(f"fc:accounts:{uid}")
+    arr = json.loads(raw) if raw else []
+    return {"items": arr}
+
+
+@app.post("/v1/stripe/webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig = request.headers.get("Stripe-Signature")
+    if not STRIPE_WEBHOOK_SECRET:
+        # Accept silently in dev when not configured
+        return {"received": True, "unchecked": True}
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+    except Exception:
+        raise HTTPException(status_code=400, detail={"code": "bad_signature", "message": "Invalid webhook signature"})
+
+    et = event.get("type") or getattr(event, "type", None)
+    obj = event.get("data", {}).get("object") if isinstance(event, dict) else getattr(event, "data", {}).get("object")
+    try:
+        if et == "financial_connections.account.disconnected" and obj:
+            acc_id = obj.get("id")
+            r = _redis()
+            uid_raw = r.get(f"fc:acct:{acc_id}")
+            if uid_raw:
+                try:
+                    uid = int(uid_raw.decode("utf-8")) if isinstance(uid_raw, (bytes, bytearray)) else int(uid_raw)
+                    k = f"fc:accounts:{uid}"
+                    raw = r.get(k)
+                    arr = json.loads(raw) if raw else []
+                    arr = [x for x in arr if str(x.get("id")) != acc_id]
+                    r.set(k, json.dumps(arr))
+                except Exception:
+                    pass
+            r.delete(f"fc:acct:{acc_id}")
+    except Exception:
+        # best-effort; never fail webhook processing in dev
+        pass
+    return {"received": True}
+
+
 def _stripe_ensure_price(period: str) -> str:
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail={"code": "stripe_not_configured", "message": "STRIPE_SECRET_KEY missing"})
@@ -556,6 +705,272 @@ async def upload_csv(
     return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content={"job_id": job.id})
 
 
+# ---- Statement detection/parsing (CSV/XLSX, basic PDF guidance) ----
+
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(15 * 1024 * 1024)))  # 15MB
+
+_DATE_TOKENS = [
+    "posting date", "post date", "transaction date", "date"
+]
+_DESC_TOKENS = [
+    "description", "transaction description", "memo", "payee", "name"
+]
+_AMOUNT_TOKENS = [
+    "amount", "charge", "payment", "deposit"
+]
+_DEBIT_TOKENS = [
+    "debit", "withdrawal", "outflow"
+]
+_CREDIT_TOKENS = [
+    "credit", "payment", "deposit", "inflow"
+]
+_BALANCE_TOKENS = [
+    "balance", "running balance"
+]
+
+def _norm(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+def _best_match(headers: list[str], candidates: list[str]) -> str | None:
+    hs = [_norm(h) for h in headers]
+    for cand in candidates:
+        if cand in hs:
+            return headers[hs.index(cand)]
+    # fuzzy contains
+    for i, h in enumerate(hs):
+        for cand in candidates:
+            if cand in h:
+                return headers[i]
+    return None
+
+def _classify_headers(headers: list[str]) -> dict:
+    h_date = _best_match(headers, _DATE_TOKENS)
+    h_desc = _best_match(headers, _DESC_TOKENS)
+    h_amount = _best_match(headers, _AMOUNT_TOKENS)
+    h_debit = _best_match(headers, _DEBIT_TOKENS)
+    h_credit = _best_match(headers, _CREDIT_TOKENS)
+    h_balance = _best_match(headers, _BALANCE_TOKENS)
+    shape = "unknown"
+    if h_debit and h_credit:
+        shape = "split_debit_credit"
+    elif h_amount:
+        shape = "single_amount"
+    mapping = {
+        "date": h_date,
+        "description": h_desc,
+        "amount": h_amount,
+        "debit": h_debit,
+        "credit": h_credit,
+        "balance": h_balance,
+    }
+    detected = shape != "unknown" and (h_date or h_desc) is not None
+    return {"shape": shape, "mapping": mapping, "detected": bool(detected)}
+
+def _csv_headers(data: bytes) -> list[str]:
+    # Try utf-8 first, fallback latin-1
+    for enc in ("utf-8", "latin-1"):
+        try:
+            text = data.decode(enc, errors="strict")
+            break
+        except Exception:
+            text = data.decode(enc, errors="ignore")
+            break
+    sample = "\n".join(text.splitlines()[:3])
+    reader = csv.reader(io.StringIO(sample))
+    try:
+        header = next(reader)
+        return [str(h or "").strip() for h in header]
+    except Exception:
+        # fallback: first line split by comma
+        first = sample.splitlines()[0] if sample else ""
+        return [h.strip() for h in first.split(",") if h.strip()]
+
+def _xlsx_headers(data: bytes) -> list[str]:
+    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    ws = wb.worksheets[0]
+    row1 = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+    headers = [str(x) if x is not None else "" for x in row1]
+    return headers
+
+def _xlsx_to_csv_bytes(data: bytes) -> bytes:
+    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    ws = wb.worksheets[0]
+    sio = io.StringIO()
+    writer = csv.writer(sio)
+    for row in ws.iter_rows(values_only=True):
+        vals = ["" if v is None else (str(v) if not isinstance(v, (int, float)) else v) for v in row]
+        writer.writerow(vals)
+    return sio.getvalue().encode("utf-8")
+
+def _parse_amount(val) -> float | None:
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        try:
+            return float(val)
+        except Exception:
+            return None
+    s = str(val).strip()
+    if not s:
+        return None
+    neg = False
+    if s.startswith("(") and s.endswith(")"):
+        neg = True
+        s = s[1:-1]
+    s = s.replace(",", "").replace("$", "").replace("€", "").replace("£", "")
+    if s.lower().endswith(" cr"):
+        s = s[:-3].strip()
+    if s.lower().endswith(" dr"):
+        s = s[:-3].strip()
+        neg = True
+    try:
+        v = float(s)
+        return -v if neg else v
+    except Exception:
+        # try to extract digits
+        m = re.search(r"-?\d+(?:\.\d+)?", s)
+        if not m:
+            return None
+        v = float(m.group(0))
+        return -v if neg or s.strip().startswith("-") else v
+
+def _parse_date(val) -> str | None:
+    if not val:
+        return None
+    if isinstance(val, datetime):
+        return val.date().isoformat()
+    s = str(val).strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d", "%d-%b-%Y"):
+        try:
+            return datetime.strptime(s, fmt).date().isoformat()
+        except Exception:
+            continue
+    # leave as-is if looks like ISO
+    if re.match(r"\d{4}-\d{2}-\d{2}", s):
+        return s[:10]
+    return None
+
+def _normalize_csv(csv_bytes: bytes) -> bytes:
+    # Decode using tolerant approach
+    text: str
+    try:
+        text = csv_bytes.decode("utf-8")
+    except Exception:
+        text = csv_bytes.decode("latin-1", errors="ignore")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=422, detail={"code": "bad_csv", "message": "Missing header row"})
+    headers = [h for h in reader.fieldnames if h is not None]
+    cls = _classify_headers(headers)
+    if not cls.get("detected"):
+        raise HTTPException(status_code=422, detail={"code": "unsupported_format", "message": "Could not recognize columns"})
+    m = cls["mapping"]
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["date", "amount", "description"])  # normalized minimal schema
+    for row in reader:
+        raw_date = row.get(m.get("date")) if m.get("date") else (row.get("Date") or row.get("date"))
+        raw_desc = row.get(m.get("description")) if m.get("description") else (row.get("Description") or row.get("description"))
+        amt: float | None = None
+        if cls["shape"] == "single_amount":
+            amt = _parse_amount(row.get(m.get("amount"))) if m.get("amount") else None
+        elif cls["shape"] == "split_debit_credit":
+            d = _parse_amount(row.get(m.get("debit"))) if m.get("debit") else None
+            c = _parse_amount(row.get(m.get("credit"))) if m.get("credit") else None
+            if d is not None or c is not None:
+                d = d or 0.0
+                c = c or 0.0
+                amt = (c - d)
+        date_iso = _parse_date(raw_date)
+        desc = (raw_desc or "").strip()
+        if date_iso is None and amt is None and not desc:
+            continue  # skip empty row
+        # Default any missing
+        if date_iso is None:
+            # skip if hopeless
+            continue
+        if amt is None:
+            amt = 0.0
+        w.writerow([date_iso, f"{amt:.2f}", desc])
+    return out.getvalue().encode("utf-8")
+
+@app.post("/v1/statements/detect")
+async def detect_statement(file: UploadFile = File(...)):
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail={"code": "file_too_large", "message": "File exceeds size limit"})
+    name = (file.filename or "").lower()
+    ctype = (file.content_type or "").lower()
+
+    try:
+        if name.endswith(".csv") or "csv" in ctype:
+            headers = _csv_headers(data[:64*1024])
+            result = _classify_headers(headers)
+            return {"kind": "csv", "headers": headers, **result,
+                    "recommended_action": "parse" if result["detected"] else "manual_map"}
+        if name.endswith(".xlsx") or "spreadsheetml" in ctype:
+            headers = _xlsx_headers(data)
+            result = _classify_headers(headers)
+            return {"kind": "xlsx", "headers": headers, **result,
+                    "recommended_action": "parse" if result["detected"] else "manual_map"}
+        if name.endswith(".pdf") or ctype == "application/pdf":
+            # basic guidance only
+            try:
+                reader = PdfReader(io.BytesIO(data))
+                text = reader.pages[0].extract_text() if reader.pages else ""
+                has_table = bool(re.search(r"Date\s+.*Amount|Debit|Credit", text or "", flags=re.I))
+            except Exception:
+                has_table = False
+            return {"kind": "pdf", "detected": has_table, "recommended_action": "convert_to_csv"}
+        return {"kind": "unknown", "detected": False, "recommended_action": "convert_to_csv"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"code": "detect_failed", "message": str(e)})
+
+
+@app.post("/v1/statements/ingest")
+async def ingest_statement(
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_session),
+):
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail={"code": "file_too_large", "message": "File exceeds size limit"})
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+
+    name = (file.filename or "").lower()
+    ctype = (file.content_type or "").lower()
+    csv_bytes: bytes
+    try:
+        if name.endswith(".csv") or "csv" in ctype:
+            csv_bytes = data
+        elif name.endswith(".xlsx") or "spreadsheetml" in ctype:
+            csv_bytes = _xlsx_to_csv_bytes(data)
+        else:
+            raise HTTPException(status_code=415, detail={"code": "unsupported_type", "message": "Please upload CSV or XLSX"})
+        # Normalize columns to minimal schema
+        csv_bytes = _normalize_csv(csv_bytes)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"code": "convert_failed", "message": str(e)})
+
+    q = _queue()
+    job = q.enqueue_call(
+        func="worker.jobs.csv_ingest_db.ingest_csv",
+        args=(csv_bytes,),
+        kwargs={"user_id": int(user["id"]), "user_email": user["email"]},
+        timeout=300,
+    )
+    return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content={"job_id": job.id})
+
+
 @app.get("/v1/jobs/{job_id}")
 async def job_status(job_id: str):
     q = _queue()
@@ -593,7 +1008,7 @@ async def list_transactions(
             TransactionsRaw.description,
         )
         .join(TransactionsRaw, Transactions.tx_id == TransactionsRaw.id)
-        .order_by(Transactions.id.desc())
+        .order_by(TransactionsRaw.date.desc(), Transactions.id.desc())
         .limit(limit)
     )
     if cursor is not None:
@@ -620,6 +1035,50 @@ async def list_transactions(
     ]
     next_cursor = items[-1]["id"] if items else None
     return {"items": items, "next_cursor": next_cursor}
+
+@app.delete("/v1/transactions")
+async def delete_all_transactions(authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    # Count first for response
+    cnt_row = db.execute(text("SELECT COUNT(*) FROM transactions_raw WHERE user_id=:uid"), {"uid": user["id"]}).first()
+    count = int(cnt_row[0]) if cnt_row else 0
+    # Delete normalized first (in case FK cascade is not present)
+    db.execute(text("""
+        DELETE FROM transactions
+        WHERE user_id=:uid AND tx_id IN (SELECT id FROM transactions_raw WHERE user_id=:uid)
+    """), {"uid": user["id"]})
+    # Then delete raw rows
+    db.execute(text("DELETE FROM transactions_raw WHERE user_id=:uid"), {"uid": user["id"]})
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail={"code": "delete_failed", "message": "Could not clear transactions"})
+    return {"ok": True, "deleted": count}
+
+@app.post("/v1/transactions/backfill")
+async def backfill_transactions(authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
+    user, _plan = _get_auth_user(authorization, db)
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Login required"})
+    # Insert missing normalized rows for this user; leave category as NULL to avoid enum cast issues
+    try:
+        db.execute(text(
+            """
+            INSERT INTO transactions (user_id, tx_id, category, merchant_norm, normalized_desc, confidence, is_recurring)
+            SELECT tr.user_id, tr.id, NULL, tr.merchant_raw, tr.description, NULL, FALSE
+            FROM transactions_raw tr
+            LEFT JOIN transactions t ON t.tx_id = tr.id
+            WHERE tr.user_id = :uid AND t.id IS NULL
+            """
+        ), {"uid": user["id"]})
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail={"code": "backfill_failed", "message": str(e)})
+    return {"ok": True}
 
 @app.get("/v1/spend/summary")
 async def spend_summary(period: str = "last_30d", authorization: str | None = Header(default=None), db: Session = Depends(get_session)):
