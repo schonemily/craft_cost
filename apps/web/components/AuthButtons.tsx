@@ -1,28 +1,31 @@
 "use client";
 import * as React from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
-import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 export default function AuthButtons() {
   const { data: session, status } = useSession();
   const loading = status === "loading";
+  const pathname = usePathname();
+  const onAuthPage = pathname === "/signin" || pathname === "/signup" || pathname === "/login";
 
   if (loading) return <div className="text-xs text-[var(--muted)]">Loading…</div>;
+  if (onAuthPage) return null;
 
   if (!session) {
     return (
       <div className="flex items-center gap-2">
-        <Link
-          href="/signup"
-          className="rounded border border-[var(--border)]/60 px-3 py-1 text-xs hover:bg-white/5"
-        >
-          Sign up
-        </Link>
         <button
-          onClick={() => signIn()}
+          onClick={() => signIn("google", { callbackUrl: "/" })}
           className="rounded border border-[var(--border)]/60 px-3 py-1 text-xs hover:bg-white/5"
         >
-          Sign in
+          Google
+        </button>
+        <button
+          onClick={() => signIn("github", { callbackUrl: "/" })}
+          className="rounded border border-[var(--border)]/60 px-3 py-1 text-xs hover:bg-white/5"
+        >
+          GitHub
         </button>
       </div>
     );

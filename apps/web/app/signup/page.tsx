@@ -1,22 +1,13 @@
 "use client";
 import * as React from "react";
-import toast from "react-hot-toast";
-import { signIn } from "next-auth/react";
-import { useSession } from "next-auth/react";
-import Link from "next/link";
+import { signIn, useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 
 function SignupInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010";
   const { data: session } = useSession();
-  const [name, setName] = React.useState("");
-  const [email, setEmail] = React.useState("");
-  const [password, setPassword] = React.useState("");
-  const [confirm, setConfirm] = React.useState("");
-  const [loading, setLoading] = React.useState(false);
 
   React.useEffect(() => {
     if (session) {
@@ -25,134 +16,29 @@ function SignupInner() {
     }
   }, [session, router, searchParams]);
 
-  function validate(): string | null {
-    const em = email.trim();
-    const nm = name.trim();
-    if (!nm || nm.length < 2) return "Please enter your full name";
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return "Enter a valid email";
-    if ((password || "").length < 8) return "Password must be at least 8 characters";
-    if (password !== confirm) return "Passwords do not match";
-    return null;
-  }
-
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const err = validate();
-    if (err) {
-      toast.error(err);
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await fetch(`${apiBase}/api/auth/signup`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
-      });
-      if (res.status === 403) {
-        toast.error("Sign-up is disabled in this environment");
-        return;
-      }
-      if (!res.ok) {
-        let msg = "Sign-up failed";
-        let code: string | undefined = undefined;
-        try {
-          const body = await res.json();
-          code = body?.error?.code || body?.detail?.code;
-          msg = body?.error?.message || body?.detail?.message || body?.message || msg;
-        } catch {}
-        if (code === "email_taken") {
-          // Try to sign you in with the entered credentials
-          const cb2 = searchParams.get("callbackUrl") || "/";
-          const s2 = await signIn("credentials", { email, password, redirect: false, callbackUrl: cb2 });
-          if ((s2 as any)?.ok || (s2 as any)?.url) {
-            router.replace((s2 as any)?.url || cb2);
-            return;
-          }
-        }
-        toast.error(msg);
-        return;
-      }
-      // If backend returns new shape, we could persist token immediately as a fallback
-      try {
-        const body = await res.json();
-        const t = (body as any)?.token;
-        if (t) {
-          try { localStorage.setItem("apiToken", String(t)); } catch {}
-        }
-      } catch {}
-      // Auto sign-in via credentials after register
-      try { localStorage.setItem("userName", name.trim()); } catch {}
-      const cb = searchParams.get("callbackUrl") || "/";
-      const s = await signIn("credentials", { email, password, redirect: false, callbackUrl: cb });
-      if ((s as any)?.error || s === undefined) {
-        toast.error("Signed up, but sign-in failed");
-      } else if ((s as any)?.ok || (s as any)?.url) {
-        router.replace((s as any)?.url || cb);
-      }
-    } catch {
-      toast.error("Sign-up failed");
-    } finally {
-      setLoading(false);
-    }
-  }
+  // Signup via form is removed; OAuth only
 
   return (
     <div className="mx-auto max-w-sm">
-      <h1 className="text-xl font-semibold text-white/90 mb-4">Create your account</h1>
-      <form onSubmit={onSubmit} className="space-y-3">
-        <div>
-          <label className="block text-sm text-[var(--muted)] mb-1">Name</label>
-          <input
-            type="text"
-            className="w-full bg-transparent outline-none border border-[var(--border)]/60 rounded px-3 py-2"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-            minLength={2}
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-[var(--muted)] mb-1">Email</label>
-          <input
-            type="email"
-            className="w-full bg-transparent outline-none border border-[var(--border)]/60 rounded px-3 py-2"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-[var(--muted)] mb-1">Password</label>
-          <input
-            type="password"
-            className="w-full bg-transparent outline-none border border-[var(--border)]/60 rounded px-3 py-2"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={8}
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-[var(--muted)] mb-1">Confirm password</label>
-          <input
-            type="password"
-            className="w-full bg-transparent outline-none border border-[var(--border)]/60 rounded px-3 py-2"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            required
-            minLength={8}
-          />
-        </div>
+      <h1 className="text-xl font-semibold text-white/90 mb-4">Continue with</h1>
+      <div className="space-y-3">
         <button
-          type="submit"
-          disabled={loading}
-          className="w-full rounded bg-brand-600/80 hover:bg-brand-600 px-3 py-2 text-sm text-white"
+          type="button"
+          onClick={() => signIn("google", { callbackUrl: "/" })}
+          className="w-full rounded border border-[var(--border)]/60 px-3 py-2 text-sm hover:bg-white/5 flex items-center justify-center gap-2"
         >
-          {loading ? "Creating…" : "Sign up"}
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="h-4 w-4" aria-hidden="true"><path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12s5.373-12,12-12 c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C33.63,6.053,29.043,4,24,4C12.955,4,4,12.955,4,24s8.955,20,20,20 s20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/><path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,16.108,18.961,14,24,14c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657 C33.63,6.053,29.043,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/><path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.197l-6.2-5.238C29.211,35.091,26.715,36,24,36 c-5.202,0-9.619-3.317-11.283-7.946l-6.536,5.036C9.5,39.556,16.227,44,24,44z"/><path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.793,2.237-2.231,4.166-4.094,5.565c0.001-0.001,0.002-0.001,0.003-0.002 l6.2,5.238C36.271,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/></svg>
+          <span>Continue with Google</span>
         </button>
-        <p className="text-xs text-[var(--muted)]">Already have an account? <Link className="underline hover:text-white" href="/signin">Sign in</Link></p>
-      </form>
+        <button
+          type="button"
+          onClick={() => signIn("github", { callbackUrl: "/" })}
+          className="w-full rounded border border-[var(--border)]/60 px-3 py-2 text-sm hover:bg-white/5 flex items-center justify-center gap-2"
+        >
+          <svg viewBox="0 0 16 16" version="1.1" aria-hidden="true" className="h-4 w-4 fill-white"><path fillRule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+          <span>Continue with GitHub</span>
+        </button>
+      </div>
     </div>
   );
 }

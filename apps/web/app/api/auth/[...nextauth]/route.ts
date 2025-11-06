@@ -1,6 +1,4 @@
 import NextAuth from "next-auth";
-import Credentials from "next-auth/providers/credentials";
-import EmailProvider from "next-auth/providers/email";
 import GoogleProvider from "next-auth/providers/google";
 import GitHubProvider from "next-auth/providers/github";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
@@ -17,16 +15,6 @@ const handler = NextAuth({
   },
   adapter: PrismaAdapter(prisma) as any,
   providers: [
-    EmailProvider({
-      server: {
-        host: process.env.SMTP_HOST || "mailhog",
-        port: Number(process.env.SMTP_PORT || 1025),
-        auth: (process.env.SMTP_USER && process.env.SMTP_PASS) ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
-        secure: String(process.env.SMTP_USE_SSL || "false").toLowerCase() === "true",
-      },
-      from: process.env.EMAIL_FROM || "noreply@craft_cost.local",
-      maxAge: 60 * 60, // 1h magic link
-    }),
     GoogleProvider({
       clientId: String(process.env.GOOGLE_CLIENT_ID || ""),
       clientSecret: String(process.env.GOOGLE_CLIENT_SECRET || ""),
@@ -36,54 +24,6 @@ const handler = NextAuth({
       clientId: String(process.env.GITHUB_CLIENT_ID || ""),
       clientSecret: String(process.env.GITHUB_CLIENT_SECRET || ""),
       allowDangerousEmailAccountLinking: true,
-    }),
-    Credentials({
-      name: "Credentials",
-      credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" },
-      },
-      async authorize(credentials: any) {
-        if (!credentials?.email || !credentials?.password) return null;
-        try {
-          const res = await fetch(`${apiInternal}/api/auth/login`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: credentials.email, password: credentials.password }),
-          });
-          if (!res.ok) return null;
-          const data = await res.json();
-          const token = (data as any)?.token || (data as any)?.access_token;
-          if (!token) return null;
-          // Prefer user from auth response if present
-          const u1 = (data as any)?.user || {};
-          if (u1 && (u1.id || u1.email)) {
-            return {
-              id: String(u1.id ?? ""),
-              email: String(u1.email ?? credentials.email),
-              role: String(u1.role ?? "user"),
-              plan: String(u1.plan ?? "free"),
-              apiToken: token,
-            } as any;
-          }
-          // Fallback to /v1/auth/me
-          const me = await fetch(`${apiInternal}/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
-          if (!me.ok) {
-            return { id: "0", email: String(credentials.email), role: "user", plan: "free", apiToken: token } as any;
-          }
-          const meData = await me.json();
-          const u = meData?.user || {};
-          return {
-            id: String(u.id ?? ""),
-            email: String(u.email ?? credentials.email),
-            role: String(u.role ?? "user"),
-            plan: String(u.plan ?? "free"),
-            apiToken: token,
-          } as any;
-        } catch {
-          return null;
-        }
-      },
     }),
   ],
   callbacks: {
