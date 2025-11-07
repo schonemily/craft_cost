@@ -2,6 +2,7 @@
 import * as React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSession } from 'next-auth/react'
+import { AnimatePresence, motion } from 'framer-motion'
 
 export default function SuggestionsPage() {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010"
@@ -107,8 +108,17 @@ export default function SuggestionsPage() {
           <div className="text-sm text-[var(--muted)]">No suggestions yet. Upload transactions and try again.</div>
         )}
         <div className="grid gap-4">
-          {query.data?.items?.map((s) => (
-            <article key={s.id} className="rounded-lg border border-[var(--border)]/60 bg-[var(--surface)]/60 p-4">
+          <AnimatePresence initial={false}>
+          {query.data?.items?.map((s, idx) => (
+            <motion.article
+              key={s.id}
+              layout
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.18, delay: Math.min(idx, 6) * 0.02, ease: 'easeOut' }}
+              className="rounded-lg border border-[var(--border)]/60 bg-[var(--surface)]/60 p-4 will-change-transform"
+            >
               <div className="flex items-start justify-between">
                 <div>
                   <h2 className="font-semibold text-white/90">{s.title}</h2>
@@ -133,8 +143,9 @@ export default function SuggestionsPage() {
                   {renderEvidence(s.evidence)}
                 </details>
               )}
-            </article>
+            </motion.article>
           ))}
+          </AnimatePresence>
         </div>
       </section>
     </div>
