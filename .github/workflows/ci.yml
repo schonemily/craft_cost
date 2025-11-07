@@ -19,6 +19,8 @@ jobs:
         run: |
           npm install
       - name: Generate Prisma Client
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app?schema=nextauth
         run: |
           npx prisma generate --schema apps/web/prisma/schema.prisma
       - name: Build web
