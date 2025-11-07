@@ -26,6 +26,17 @@ jobs:
           NEXT_TELEMETRY_DISABLED: '1'
           NEXTAUTH_SECRET: test_secret
           NEXTAUTH_URL: http://localhost:3001
+          # Required for Prisma client instantiation during build
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app?schema=nextauth
+          # Dummy OAuth provider envs to satisfy NextAuth provider config at build time
+          GOOGLE_CLIENT_ID: test-google-id
+          GOOGLE_CLIENT_SECRET: test-google-secret
+          GITHUB_CLIENT_ID: test-github-id
+          GITHUB_CLIENT_SECRET: test-github-secret
+          # Internal API variables (not used during build, but safe defaults)
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8010
+          API_INTERNAL_URL: http://localhost:8010
+          MINT_TOKEN_SECRET: dev_mint_secret
         run: |
           npm run --workspace web build
 
