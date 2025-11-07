@@ -2,18 +2,17 @@
 import * as React from "react";
 import toast from "react-hot-toast";
 import { useSession } from "next-auth/react";
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-  CartesianGrid,
-  BarChart,
-  Bar,
-} from "recharts";
+import dynamic from "next/dynamic";
+
+const Charts = dynamic(() => import("../../components/Charts"), {
+  ssr: false,
+  loading: () => (
+    <div className="mt-4 grid gap-4 md:grid-cols-2">
+      <div className="h-64 w-full rounded border border-[var(--border)]/60 bg-[var(--surface)]/60 animate-pulse" />
+      <div className="h-64 w-full rounded border border-[var(--border)]/60 bg-[var(--surface)]/60 animate-pulse" />
+    </div>
+  ),
+});
 
 export default function DebtPage() {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010";
@@ -295,33 +294,7 @@ export default function DebtPage() {
                   </div>
                 )}
                 {includeSchedule && r.monthly && (
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <div className="h-64 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={(r.monthly as any[])?.map((m: any) => ({ m: m.month, bal: m.balance }))}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-                          <XAxis dataKey="m" stroke="rgba(255,255,255,0.5)" />
-                          <YAxis stroke="rgba(255,255,255,0.5)" />
-                          <Tooltip />
-                          <Legend />
-                          <Line type="monotone" dataKey="bal" name="Balance" stroke="#60a5fa" dot={false} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="h-64 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={(r.monthly as any[])?.map((m: any) => ({ m: m.month, principal: m.principal, interest: m.interest }))}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-                          <XAxis dataKey="m" stroke="rgba(255,255,255,0.5)" />
-                          <YAxis stroke="rgba(255,255,255,0.5)" />
-                          <Tooltip />
-                          <Legend />
-                          <Bar dataKey="principal" stackId="a" fill="#34d399" name="Principal" />
-                          <Bar dataKey="interest" stackId="a" fill="#f472b6" name="Interest" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
+                  <Charts monthly={r.monthly as any[]} />
                 )}
                 {includeSchedule && r.monthly && (
                   <div className="mt-3 flex items-center gap-3">
