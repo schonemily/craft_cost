@@ -5,8 +5,11 @@ import { homeContent } from "../content/home";
 import { Card } from "../components/Card";
 import SubscribeButton from "../components/SubscribeButton";
 import { HeroGeometric } from "@/components/ui/shape-landing-hero";
+import { motion } from "framer-motion";
+import { useMotion } from "@/components/MotionProvider";
 
 export default function Page() {
+  const { reduced } = useMotion();
   function AnimatedNumber({ value }: { value: string }) {
     const n = parseInt(value.replace(/[^0-9]/g, ""), 10);
     const isNum = !isNaN(n);
@@ -36,7 +39,15 @@ export default function Page() {
         <HeroGeometric badge={homeContent.appName} title1="Elevate Your Financial Clarity" title2="Crafting Smart Savings" />
       </section>
 
-      <section className="mx-auto max-w-6xl">
+      <div className="-mt-6 h-8 sm:h-10 bg-gradient-to-b from-transparent via-white/10 to-transparent opacity-70" />
+
+      <motion.section
+        className="mx-auto max-w-6xl"
+        initial={reduced ? false : { opacity: 0, y: 24 }}
+        whileInView={reduced ? undefined : { opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.3 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+      >
         <div className="mb-6 grid grid-cols-2 md:grid-cols-4 gap-4">
           {homeContent.metrics.map((m, idx) => (
             <div key={idx} className="rounded-lg border border-[var(--border)]/60 bg-[var(--surface)]/60 p-4 text-center">
@@ -52,9 +63,15 @@ export default function Page() {
             ))}
           </div>
         </div>
-      </section>
+      </motion.section>
 
-      <section className="mx-auto max-w-6xl">
+      <motion.section
+        className="mx-auto max-w-6xl"
+        initial={reduced ? false : { opacity: 0, y: 24 }}
+        whileInView={reduced ? undefined : { opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.3 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+      >
         <h2 className="text-lg font-semibold text-white/90 mb-3">Pricing</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="rounded-xl border border-[var(--border)]/60 bg-[var(--surface)]/60 p-6">
@@ -78,18 +95,30 @@ export default function Page() {
             </div>
           </div>
         </div>
-      </section>
+      </motion.section>
 
-      <section className="mx-auto max-w-6xl">
+      <motion.section
+        className="mx-auto max-w-6xl"
+        initial={reduced ? false : { opacity: 0, y: 24 }}
+        whileInView={reduced ? undefined : { opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.3 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+      >
         <h2 className="text-lg font-semibold text-white/90 mb-3">Quick actions</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           {homeContent.quick.map((q, idx) => (
             <Card key={idx} title={q.title} href={q.href}>{q.description}</Card>
           ))}
         </div>
-      </section>
+      </motion.section>
 
-      <section className="mx-auto max-w-6xl">
+      <motion.section
+        className="mx-auto max-w-6xl"
+        initial={reduced ? false : { opacity: 0, y: 24 }}
+        whileInView={reduced ? undefined : { opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.3 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+      >
         <h2 className="text-lg font-semibold text-white/90 mb-3">{homeContent.how.headline}</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           {homeContent.how.steps.map((s, idx) => (
@@ -99,18 +128,30 @@ export default function Page() {
             </div>
           ))}
         </div>
-      </section>
+      </motion.section>
 
-      <section className="mx-auto max-w-6xl">
+      <motion.section
+        className="mx-auto max-w-6xl"
+        initial={reduced ? false : { opacity: 0, y: 24 }}
+        whileInView={reduced ? undefined : { opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.3 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+      >
         <h2 className="text-lg font-semibold text-white/90 mb-3">{homeContent.why.headline}</h2>
         <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-[var(--muted)] list-disc pl-5">
           {homeContent.why.bullets.map((b, idx) => (
             <li key={idx}>{b}</li>
           ))}
         </ul>
-      </section>
+      </motion.section>
 
-      <section className="mx-auto max-w-6xl">
+      <motion.section
+        className="mx-auto max-w-6xl"
+        initial={reduced ? false : { opacity: 0, y: 24 }}
+        whileInView={reduced ? undefined : { opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.3 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+      >
         <h2 className="text-lg font-semibold text-white/90 mb-3">Fees & Transparency</h2>
         <div className="rounded-lg border border-[var(--border)]/60 bg-[var(--surface)]/60 p-5">
           <ul className="list-disc pl-5 text-sm text-[var(--muted)] space-y-1">
@@ -119,9 +160,15 @@ export default function Page() {
             <li>Cancel anytime. No lock‑in. Export your data when you leave.</li>
           </ul>
         </div>
-      </section>
+      </motion.section>
 
-      <section className="mx-auto max-w-6xl">
+      <motion.section
+        className="mx-auto max-w-6xl"
+        initial={reduced ? false : { opacity: 0, y: 24 }}
+        whileInView={reduced ? undefined : { opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.3 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+      >
         <h2 className="text-lg font-semibold text-white/90 mb-3">What people say</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {homeContent.testimonials.map((t, idx) => (
@@ -131,7 +178,7 @@ export default function Page() {
             </div>
           ))}
         </div>
-      </section>
+      </motion.section>
     </div>
   );
 }
