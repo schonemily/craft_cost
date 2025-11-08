@@ -28,7 +28,7 @@ Legend: [ ] Pending  [x] Completed  [-] In Progress
 - [x] `AES_GCM_KEY` placeholder added to `.env.example`
 - [ ] Production: configure KMS-managed keys and rotation procedures [moved to Future]
 - [x] Secrets scanning in CI (gitleaks)
-
+ 
 ## 4) Authentication & Authorization
 - [ ] Adopt NextAuth.js (sessions, secure cookies) with session rotation
 - [ ] Server-side entitlements checks (plan-based) and OPA-style policy points for sensitive ops

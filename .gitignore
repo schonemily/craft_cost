@@ -90,3 +90,7 @@ pytest_cache/
 .env.local
 .env.*.local
 >>>>>>> 5714097 (chore: initial scaffold of MVP monorepo)
+
+# Local environment files
+local.env
+**/local.env
