@@ -10,6 +10,7 @@
     "@dea/ui": "file:../../packages/ui",
     "@tanstack/react-query": "^5.51.16",
     "@tanstack/react-virtual": "^3.0.0",
+    "@sentry/nextjs": "^8.25.0",
     "debt-expense-advisor": "file:../..",
     "next": "14.2.33",
     "@prisma/client": "^5.19.1",

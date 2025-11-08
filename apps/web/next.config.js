@@ -1,4 +1,5 @@
 /** @type {import('next').NextConfig} */
+const { withSentryConfig } = require('@sentry/nextjs')
 const csp = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -7,7 +8,7 @@ const csp = [
   "img-src 'self' data: blob: https://images.unsplash.com https://source.unsplash.com https://*.paddle.com https://*.stripe.com",
   "style-src 'self' 'unsafe-inline'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://cdn.paddle.com https://js.stripe.com",
-  "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 http://localhost:8010 http://127.0.0.1:8010 ws: wss: https://*.paddle.com https://*.stripe.com",
+  "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 http://localhost:8010 http://127.0.0.1:8010 ws: wss: https://*.paddle.com https://*.stripe.com https://*.sentry.io https://*.ingest.sentry.io",
   "frame-src https://*.paddle.com https://js.stripe.com https://*.stripe.com",
 ].join('; ')
 
@@ -38,4 +39,10 @@ const nextConfig = {
   },
 };
 
-module.exports = nextConfig;
+module.exports = process.env.SENTRY_DSN
+  ? withSentryConfig(
+      nextConfig,
+      { silent: true, dryRun: !process.env.SENTRY_AUTH_TOKEN },
+      { hideSourceMaps: true }
+    )
+  : nextConfig;

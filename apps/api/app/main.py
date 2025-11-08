@@ -33,8 +33,23 @@ from .suggestions_engine import generate_suggestions
 from datetime import datetime
 from openpyxl import load_workbook
 from PyPDF2 import PdfReader
+import sentry_sdk
+from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 
 app = FastAPI(title="craft_cost API")
+
+# Sentry (init only when DSN provided)
+try:
+    sentry_sdk.init(
+        dsn=os.getenv("SENTRY_DSN"),
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+        environment=os.getenv("APP_ENV", "development"),
+    )
+    if os.getenv("SENTRY_DSN"):
+        app.add_middleware(SentryAsgiMiddleware)
+except Exception:
+    # Never block app startup on observability init
+    pass
 
 # CORS: configurable via env; default to localhost for dev
 cors_env = os.getenv("CORS_ALLOW_ORIGINS")
