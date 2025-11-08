@@ -14,14 +14,40 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-      - name: Install web deps
+          cache: 'npm'
+      - name: Restore Next.js cache
+        uses: actions/cache@v4
+        with:
+          path: apps/web/.next/cache
+          key: next-cache-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            next-cache-${{ runner.os }}-
+      - name: Install dependencies (workspaces)
         run: |
-          cd apps/web
           npm install
-      - name: Build web
+      - name: Generate Prisma Client
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app?schema=nextauth
         run: |
-          cd apps/web
-          npm run build
+          npx prisma generate --schema apps/web/prisma/schema.prisma
+      - name: Build web
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          NEXTAUTH_SECRET: test_secret
+          NEXTAUTH_URL: http://localhost:3001
+          # Required for Prisma client instantiation during build
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app?schema=nextauth
+          # Dummy OAuth provider envs to satisfy NextAuth provider config at build time
+          GOOGLE_CLIENT_ID: test-google-id
+          GOOGLE_CLIENT_SECRET: test-google-secret
+          GITHUB_CLIENT_ID: test-github-id
+          GITHUB_CLIENT_SECRET: test-github-secret
+          # Internal API variables (not used during build, but safe defaults)
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8010
+          API_INTERNAL_URL: http://localhost:8010
+          MINT_TOKEN_SECRET: dev_mint_secret
+        run: |
+          npm run --workspace web build
 
   api:
     runs-on: ubuntu-latest

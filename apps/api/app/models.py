@@ -15,6 +15,16 @@ TX_CATEGORY = postgresql.ENUM(
     name="tx_category", create_type=False
 )
 
+ROLE = postgresql.ENUM(
+    "user","admin",
+    name="role", create_type=False
+)
+
+PLAN = postgresql.ENUM(
+    "free","plus",
+    name="plan", create_type=False
+)
+
 
 class TransactionsRaw(Base):
     __tablename__ = "transactions_raw"
@@ -47,3 +57,21 @@ class Flag(Base):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     bool_value: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class Users(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    role: Mapped[str] = mapped_column(ROLE, nullable=False, default="user")
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class Billing(Base):
+    __tablename__ = "billing"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    plan: Mapped[str] = mapped_column(PLAN, nullable=False)

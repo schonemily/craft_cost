@@ -9,20 +9,33 @@
   "dependencies": {
     "@dea/ui": "file:../../packages/ui",
     "@tanstack/react-query": "^5.51.16",
+    "@tanstack/react-virtual": "^3.0.0",
+    "@sentry/nextjs": "^8.25.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.3.0",
+    "lucide-react": "^0.441.0",
     "debt-expense-advisor": "file:../..",
     "next": "14.2.33",
+    "@prisma/client": "^5.19.1",
+    "framer-motion": "^11.0.0",
+    "nodemailer": "^7.0.7",
+    "@stripe/stripe-js": "^3.4.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-hot-toast": "^2.4.0",
-    "recharts": "^2.12.7"
+    "recharts": "^2.12.7",
+    "next-auth": "4.24.7",
+    "@next-auth/prisma-adapter": "^1.0.7"
   },
   "devDependencies": {
     "@types/node": "20.14.12",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
+    "@tanstack/react-query-devtools": "^5.51.16",
     "autoprefixer": "10.4.20",
     "postcss": "8.4.38",
     "tailwindcss": "3.4.10",
-    "typescript": "5.5.4"
+    "typescript": "5.5.4",
+    "prisma": "^5.19.1"
   }
 }

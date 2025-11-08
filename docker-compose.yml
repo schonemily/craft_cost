@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: app
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
 
   minio:
     image: minio/minio:latest
@@ -27,15 +27,15 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000"
+      - "9003:9001"
     volumes:
       - minio_data:/data
 
   mailhog:
     image: mailhog/mailhog:latest
     ports:
-      - "8025:8025"
+      - "8026:8025"
 
   api:
     build:
@@ -43,6 +43,10 @@ services:
     environment:
       APP_NAME: craft_cost API
       APP_ENV: development
+      CORS_ALLOW_ORIGINS: http://localhost:3001
+      USE_LOCAL_DB: "true"
+      LOCAL_DB_PATH: /data/users.json
+      ADMIN_EMAILS: "bhargavcyber7@gmail.com"
       POSTGRES_URL: postgresql+psycopg://postgres:postgres@db:5432/app
       REDIS_URL: redis://redis:6379/0
       STORAGE_ENDPOINT: http://minio:9000
@@ -50,13 +54,36 @@ services:
       STORAGE_ACCESS_KEY: minioadmin
       STORAGE_SECRET_KEY: minioadmin
       SESSION_SECRET: dev_session_secret
+      PDF_SERVICE_URL: http://pdf:4000/render
+      SMTP_HOST: ${SMTP_HOST:-mailhog}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
+      MAIL_FROM: ${MAIL_FROM:-noreply@craft_cost.local}
+      JWT_SECRET: ${JWT_SECRET:-dev_jwt_secret}
+      SESSION_MAX_AGE: ${SESSION_MAX_AGE:-604800}
+      MINT_TOKEN_SECRET: ${MINT_TOKEN_SECRET:-dev_mint_secret}
+      # Stripe
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_ID_MONTHLY: ${STRIPE_PRICE_ID_MONTHLY:-}
+      STRIPE_PRICE_ID_ANNUAL: ${STRIPE_PRICE_ID_ANNUAL:-}
+      WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3001}
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
+      pdf:
+        condition: service_started
+      mailhog:
+        condition: service_started
     ports:
-      - "8000:8000"
+      - "8010:8000"
+    volumes:
+      - ./data:/data
 
   worker:
     build:
@@ -75,13 +102,36 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8010
+      API_INTERNAL_URL: http://api:8000
+      MINT_TOKEN_SECRET: ${MINT_TOKEN_SECRET:-dev_mint_secret}
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/app?schema=nextauth
+      SMTP_HOST: ${SMTP_HOST:-mailhog}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
+      EMAIL_FROM: ${MAIL_FROM:-noreply@craft_cost.local}
       NODE_ENV: production
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-dev_nextauth_secret}
+      # Stripe
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}
+      # OAuth (NextAuth providers)
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
     depends_on:
       api:
         condition: service_started
+      db:
+        condition: service_healthy
     ports:
-      - "3000:3000"
+      - "3001:3000"
+    command: >-
+      sh -c "npx prisma generate --schema apps/web/prisma/schema.prisma && npx prisma db push --schema apps/web/prisma/schema.prisma --accept-data-loss && npm run --workspace web start"
 
   pdf:
     build:
@@ -89,7 +139,7 @@ services:
     environment:
       NODE_ENV: production
     ports:
-      - "4000:4000"
+      - "4001:4000"
 
 volumes:
   db_data:

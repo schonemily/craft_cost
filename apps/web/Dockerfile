@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:20-bullseye-slim
 WORKDIR /app
 
 # Copy manifests first to leverage Docker layer caching
@@ -14,10 +14,10 @@ COPY apps/web apps/web
 COPY packages/ui packages/ui
 
 # Build web workspace
-RUN npm run --workspace web build
+RUN npx prisma generate --schema apps/web/prisma/schema.prisma && npm run --workspace web build
 
-# Run as non-root user
-RUN addgroup -S app && adduser -S app -G app -u 10001 && chown -R app:app /app
+# Run as non-root user (Debian)
+RUN useradd -m -u 10001 app && chown -R app:app /app
 USER app
 
 EXPOSE 3000

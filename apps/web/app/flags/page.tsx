@@ -5,7 +5,7 @@ import { Button } from "@dea/ui";
 type Flags = Record<string, boolean>;
 
 export default function FlagsPage() {
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010";
   const [flags, setFlags] = React.useState<Flags>({});
   const [newKey, setNewKey] = React.useState("");
   const [newVal, setNewVal] = React.useState(false);

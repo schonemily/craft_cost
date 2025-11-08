@@ -1,21 +1,24 @@
 "use client";
 import * as React from "react";
 import toast from "react-hot-toast";
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-  CartesianGrid,
-  BarChart,
-  Bar,
-} from "recharts";
+import { useSession } from "next-auth/react";
+import dynamic from "next/dynamic";
+
+const Charts = dynamic(() => import("../../components/Charts"), {
+  ssr: false,
+  loading: () => (
+    <div className="mt-4 grid gap-4 md:grid-cols-2">
+      <div className="h-64 w-full rounded border border-[var(--border)]/60 bg-[var(--surface)]/60 animate-pulse" />
+      <div className="h-64 w-full rounded border border-[var(--border)]/60 bg-[var(--surface)]/60 animate-pulse" />
+    </div>
+  ),
+});
 
 export default function DebtPage() {
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010";
+  const { data: session } = useSession();
+  const apiToken = (session as any)?.apiToken as string | undefined;
+  const signedIn = Boolean(session);
   const [debts, setDebts] = React.useState<DebtRow[]>([
     { name: "Card A", balance: 2500, apr: 19.99, min_payment: 50 },
     { name: "Card B", balance: 1200, apr: 25.99, min_payment: 35 },
@@ -39,10 +42,16 @@ export default function DebtPage() {
 
   async function onDownloadPdf() {
     try {
+      if (!signedIn) {
+        toast.error("Please sign in to download PDF");
+        return;
+      }
       const payload: any = { debts, extra, include_schedule: true, extra_schedule: extraSchedule, format: "pdf", strategy: strategy === "both" ? undefined : strategy };
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiToken) headers["Authorization"] = `Bearer ${apiToken}`;
       const r = await fetch(`${apiBase}/v1/debt/export`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(payload),
       });
       if (!r.ok) throw new Error(`Export failed (${r.status})`);
@@ -61,10 +70,16 @@ export default function DebtPage() {
 
   async function onEmailPlan() {
     try {
+      if (!signedIn) {
+        toast.error("Please sign in to email your plan");
+        return;
+      }
       const payload: any = { debts, extra, include_schedule: true, extra_schedule: extraSchedule, format: "email", email, strategy: strategy === "both" ? undefined : strategy };
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiToken) headers["Authorization"] = `Bearer ${apiToken}`;
       const r = await fetch(`${apiBase}/v1/debt/export`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(payload),
       });
       if (r.status === 402) {
@@ -102,12 +117,14 @@ export default function DebtPage() {
   React.useEffect(() => {
     (async () => {
       try {
-        const r = await fetch(`${apiBase}/v1/flags`);
+        const headers: Record<string, string> = {};
+        if (apiToken) headers["Authorization"] = `Bearer ${apiToken}`;
+        const r = await fetch(`${apiBase}/v1/flags`, { headers });
         const data = await r.json();
         setPro(Boolean(data?.flags?.pro_enabled));
       } catch {}
     })();
-  }, [apiBase]);
+  }, [apiBase, apiToken]);
 
   async function onRun(e: React.FormEvent) {
     e.preventDefault();
@@ -115,11 +132,18 @@ export default function DebtPage() {
     setResult(null);
     setLoading(true);
     try {
+      if (!signedIn) {
+        setLoading(false);
+        toast.error("Please sign in to run simulations");
+        return;
+      }
       const payload: any = { debts, extra, include_schedule: includeSchedule, extra_schedule: extraSchedule };
       if (strategy !== "both") payload.strategy = strategy;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiToken) headers["Authorization"] = `Bearer ${apiToken}`;
       const r = await fetch(`${apiBase}/v1/debt/simulate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(payload),
       });
       if (!r.ok) throw new Error(`Sim failed (${r.status})`);
@@ -270,33 +294,7 @@ export default function DebtPage() {
                   </div>
                 )}
                 {includeSchedule && r.monthly && (
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <div className="h-64 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={(r.monthly as any[])?.map((m: any) => ({ m: m.month, bal: m.balance }))}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-                          <XAxis dataKey="m" stroke="rgba(255,255,255,0.5)" />
-                          <YAxis stroke="rgba(255,255,255,0.5)" />
-                          <Tooltip />
-                          <Legend />
-                          <Line type="monotone" dataKey="bal" name="Balance" stroke="#60a5fa" dot={false} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="h-64 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={(r.monthly as any[])?.map((m: any) => ({ m: m.month, principal: m.principal, interest: m.interest }))}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-                          <XAxis dataKey="m" stroke="rgba(255,255,255,0.5)" />
-                          <YAxis stroke="rgba(255,255,255,0.5)" />
-                          <Tooltip />
-                          <Legend />
-                          <Bar dataKey="principal" stackId="a" fill="#34d399" name="Principal" />
-                          <Bar dataKey="interest" stackId="a" fill="#f472b6" name="Interest" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
+                  <Charts monthly={r.monthly as any[]} />
                 )}
                 {includeSchedule && r.monthly && (
                   <div className="mt-3 flex items-center gap-3">

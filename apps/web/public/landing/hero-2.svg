@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 800">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1020"/>
+      <stop offset="100%" stop-color="#0f1324"/>
+    </linearGradient>
+    <linearGradient id="brand2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#bg2)"/>
+  <!-- cards -->
+  <g transform="translate(200,180)" opacity="0.95">
+    <rect x="0" y="0" width="300" height="180" rx="14" fill="#121a36" stroke="#2b3350"/>
+    <rect x="340" y="0" width="300" height="180" rx="14" fill="#121a36" stroke="#2b3350"/>
+    <rect x="680" y="0" width="300" height="180" rx="14" fill="#121a36" stroke="#2b3350"/>
+    <rect x="0" y="220" width="300" height="180" rx="14" fill="#121a36" stroke="#2b3350"/>
+    <rect x="340" y="220" width="300" height="180" rx="14" fill="#121a36" stroke="#2b3350"/>
+    <rect x="680" y="220" width="300" height="180" rx="14" fill="#121a36" stroke="#2b3350"/>
+  </g>
+  <!-- line chart -->
+  <g transform="translate(220,520)">
+    <path d="M0 60C120 10 240 90 360 30S600 10 720 60" fill="none" stroke="url(#brand2)" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="0" cy="60" r="5" fill="#8b5cf6"/>
+    <circle cx="360" cy="30" r="5" fill="#8b5cf6"/>
+    <circle cx="720" cy="60" r="5" fill="#8b5cf6"/>
+  </g>
+</svg>
