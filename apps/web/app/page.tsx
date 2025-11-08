@@ -1,19 +1,12 @@
 "use client";
 import * as React from "react";
 import Image from "next/image";
-import { useSession } from "next-auth/react";
-import { Button } from "@dea/ui";
-import toast from "react-hot-toast";
 import { homeContent } from "../content/home";
 import { Card } from "../components/Card";
 import SubscribeButton from "../components/SubscribeButton";
+import { HeroGeometric } from "@/components/ui/shape-landing-hero";
 
 export default function Page() {
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010";
-  const [plaidEnabled, setPlaidEnabled] = React.useState<boolean>(false);
-  const [heroIndex, setHeroIndex] = React.useState(0);
-  const { data: session } = useSession();
-  const [plan, setPlan] = React.useState<string | null>(null);
   function AnimatedNumber({ value }: { value: string }) {
     const n = parseInt(value.replace(/[^0-9]/g, ""), 10);
     const isNum = !isNaN(n);
@@ -37,80 +30,10 @@ export default function Page() {
     return <>{v.toLocaleString()}</>;
   }
 
-  React.useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch(`${apiBase}/v1/flags`);
-        const d = await r.json();
-        setPlaidEnabled(Boolean(d?.flags?.plaid_mock_enabled ?? false));
-      } catch {
-        setPlaidEnabled(false);
-      }
-    })();
-  }, [apiBase]);
-
-  React.useEffect(() => {
-    (async () => {
-      try {
-        if (!(session as any)?.apiToken) return;
-        const r = await fetch(`${apiBase}/v1/billing/status`, {
-          headers: { Authorization: `Bearer ${(session as any).apiToken}` },
-        });
-        if (!r.ok) return;
-        const d = await r.json();
-        setPlan(String(d?.plan || (session as any)?.user?.plan || "free"));
-      } catch {}
-    })();
-  }, [apiBase, session]);
-
-  React.useEffect(() => {
-    if (homeContent.hero.images.length <= 1) return;
-    const id = setInterval(() => {
-      setHeroIndex((i) => (i + 1) % homeContent.hero.images.length);
-    }, 4000);
-    return () => clearInterval(id);
-  }, []);
-
   return (
     <div className="space-y-14">
-      <section className="mx-auto max-w-6xl grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
-        <div>
-          <div className="mb-3 inline-flex items-center gap-2">
-            <img src="/logo.svg" alt={homeContent.appName} className="h-5 w-5 opacity-90" />
-            <span className="text-sm font-semibold text-white/80">{homeContent.appName}</span>
-          </div>
-          <h1 className="text-4xl md:text-[2.75rem] leading-tight font-semibold text-white/90">{homeContent.hero.title}</h1>
-          <p className="mt-3 text-[var(--muted)] max-w-prose">{homeContent.hero.subtitle}</p>
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <a href={homeContent.hero.ctaPrimary.href} className="rounded-md bg-brand-600/90 hover:bg-brand-600 px-4 py-2 text-sm text-white font-medium">{homeContent.hero.ctaPrimary.label}</a>
-            <a href={homeContent.hero.ctaSecondary.href} className="rounded-md border border-[var(--border)]/60 px-4 py-2 text-sm text-white/90 hover:bg-white/5">{homeContent.hero.ctaSecondary.label}</a>
-            {plaidEnabled && (
-              <Button size="sm" variant="primary" onClick={() => toast("Mock Plaid flow started (stub)")}>Connect bank (mock)</Button>
-            )}
-            {session?.user && (
-              plan === "plus" ? (
-                <span className="ml-1 inline-flex items-center gap-2 rounded-md border border-emerald-600/40 bg-emerald-600/10 px-3 py-1.5 text-xs text-emerald-300">Plus active</span>
-              ) : (
-                <div className="ml-1">
-                  <SubscribeButton />
-                </div>
-              )
-            )}
-          </div>
-        </div>
-        <div className="relative">
-          <div className="rounded-2xl border border-[var(--border)]/60 bg-[var(--surface)]/60 p-2">
-            <div className="relative overflow-hidden rounded-xl aspect-[16/10]">
-              <Image src={homeContent.hero.images[heroIndex]} alt="hero" fill priority className="object-cover" />
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-black/10 via-transparent to-white/5" />
-            </div>
-          </div>
-          <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
-            {homeContent.hero.images.map((_, i) => (
-              <span key={i} className={`h-1.5 w-6 rounded-full ${i === heroIndex ? "bg-white/80" : "bg-white/30"}`} />
-            ))}
-          </div>
-        </div>
+      <section>
+        <HeroGeometric badge={homeContent.appName} title1="Elevate Your Financial Clarity" title2="Crafting Smart Savings" />
       </section>
 
       <section className="mx-auto max-w-6xl">
