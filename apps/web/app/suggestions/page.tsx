@@ -3,6 +3,7 @@ import * as React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSession } from 'next-auth/react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useWindowVirtualizer } from '@tanstack/react-virtual'
 
 export default function SuggestionsPage() {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8010"
@@ -107,45 +108,65 @@ export default function SuggestionsPage() {
         {!query.isLoading && query.data && query.data.items.length === 0 && (
           <div className="text-sm text-[var(--muted)]">No suggestions yet. Upload transactions and try again.</div>
         )}
-        <div className="grid gap-4">
-          <AnimatePresence initial={false}>
-          {query.data?.items?.map((s, idx) => (
-            <motion.article
-              key={s.id}
-              layout
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.18, delay: Math.min(idx, 6) * 0.02, ease: 'easeOut' }}
-              className="rounded-lg border border-[var(--border)]/60 bg-[var(--surface)]/60 p-4 will-change-transform"
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <h2 className="font-semibold text-white/90">{s.title}</h2>
-                  <p className="mt-1 text-sm text-[var(--muted)]">{s.summary}</p>
-                </div>
-                <div className="text-right text-sm">
-                  <div className="text-green-300">~${s.estimated_monthly_saving.toFixed(2)}/mo</div>
-                  <div className="text-green-400/80">~${s.estimated_annual_saving.toFixed(2)}/yr</div>
-                  <div className="mt-1 text-[var(--muted)]">confidence {(s.confidence * 100).toFixed(0)}%</div>
-                </div>
+        <div className="relative">
+          {(() => {
+            const items = query.data?.items ?? []
+            const rowEstimate = 160
+            const virtualizer = useWindowVirtualizer({
+              count: items.length,
+              estimateSize: () => rowEstimate,
+              overscan: 8,
+              scrollMargin: 120,
+            })
+            const virtualItems = virtualizer.getVirtualItems()
+            return (
+              <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+                <AnimatePresence initial={false}>
+                {virtualItems.map((vi) => {
+                  const s = items[vi.index]
+                  return (
+                    <motion.div
+                      key={s.id}
+                      layout
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -6 }}
+                      transition={{ duration: 0.14, ease: 'easeOut' }}
+                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)` }}
+                    >
+                      <article className="rounded-lg border border-[var(--border)]/60 bg-[var(--surface)]/60 p-4 will-change-transform">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <h2 className="font-semibold text-white/90">{s.title}</h2>
+                            <p className="mt-1 text-sm text-[var(--muted)]">{s.summary}</p>
+                          </div>
+                          <div className="text-right text-sm">
+                            <div className="text-green-300">~${s.estimated_monthly_saving.toFixed(2)}/mo</div>
+                            <div className="text-green-400/80">~${s.estimated_annual_saving.toFixed(2)}/yr</div>
+                            <div className="mt-1 text-[var(--muted)]">confidence {(s.confidence * 100).toFixed(0)}%</div>
+                          </div>
+                        </div>
+                        {!!s.tags?.length && (
+                          <div className="mt-2 flex flex-wrap gap-1 text-xs text-[var(--muted)]">
+                            {s.tags.map((t) => (
+                              <span key={t} className="rounded border border-[var(--border)]/60 px-2 py-0.5">{t}</span>
+                            ))}
+                          </div>
+                        )}
+                        {!!s.evidence?.length && (
+                          <details className="mt-3 text-sm">
+                            <summary className="cursor-pointer text-[var(--muted)]">Evidence</summary>
+                            {renderEvidence(s.evidence)}
+                          </details>
+                        )}
+                      </article>
+                    </motion.div>
+                  )
+                })}
+                </AnimatePresence>
               </div>
-              {!!s.tags?.length && (
-                <div className="mt-2 flex flex-wrap gap-1 text-xs text-[var(--muted)]">
-                  {s.tags.map((t) => (
-                    <span key={t} className="rounded border border-[var(--border)]/60 px-2 py-0.5">{t}</span>
-                  ))}
-                </div>
-              )}
-              {!!s.evidence?.length && (
-                <details className="mt-3 text-sm">
-                  <summary className="cursor-pointer text-[var(--muted)]">Evidence</summary>
-                  {renderEvidence(s.evidence)}
-                </details>
-              )}
-            </motion.article>
-          ))}
-          </AnimatePresence>
+            )
+          })()}
         </div>
       </section>
     </div>

@@ -1762,6 +1762,16 @@ async def get_flags(db: Session = Depends(get_session)):
     rows = db.execute(select(Flag)).scalars().all()
     return {"flags": {r.key: r.bool_value for r in rows}}
 
+# Combined metadata endpoint for lightweight client polling
+@app.get("/v1/meta")
+async def get_meta(db: Session = Depends(get_session)):
+    try:
+        rows = db.execute(select(Flag)).scalars().all()
+        flags = {r.key: r.bool_value for r in rows}
+    except Exception:
+        flags = {}
+    return {"ok": True, "service": "craft_cost API", "flags": flags}
+
 
 @app.post("/v1/flags")
 async def set_flag(payload: FlagPayload, authorization: str | None = Header(default=None), db: Session = Depends(get_session)):

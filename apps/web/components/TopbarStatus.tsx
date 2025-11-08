@@ -7,21 +7,32 @@ export default function TopbarStatus() {
   const [csvOn, setCsvOn] = React.useState<boolean | null>(null);
 
   React.useEffect(() => {
-    (async () => {
+    let mounted = true;
+    let timer: any;
+    const controller = new AbortController();
+    const fetchMeta = async () => {
       try {
-        const h = await fetch(`${apiBase}/healthz`);
-        setOk(h.ok);
-      } catch {
-        setOk(false);
-      }
-      try {
-        const f = await fetch(`${apiBase}/v1/flags`);
-        const d = await f.json();
+        const r = await fetch(`${apiBase}/v1/meta`, { signal: controller.signal });
+        if (!mounted) return;
+        if (!r.ok) {
+          setOk(false);
+          return;
+        }
+        const d = await r.json().catch(() => ({}));
+        setOk(true);
         setCsvOn(Boolean(d?.flags?.csv_ingestion_enabled ?? true));
       } catch {
-        setCsvOn(true);
+        if (!mounted) return;
+        setOk(false);
       }
-    })();
+    };
+    fetchMeta();
+    timer = setInterval(fetchMeta, 60000); // poll every 60s
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+      controller.abort();
+    };
   }, [apiBase]);
 
   const color = ok == null ? "bg-gray-500" : ok ? "bg-emerald-500" : "bg-red-500";
